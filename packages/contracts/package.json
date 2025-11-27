@@ -1,0 +1,10 @@
+{
+  "name": "@bounty402/contracts",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "build": "forge build",
+    "test": "forge test -vvv",
+    "fmt": "forge fmt"
+  }
+}
