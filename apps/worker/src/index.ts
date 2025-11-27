@@ -3,10 +3,18 @@ import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { z } from "zod";
 import { paymentMiddleware } from "x402-hono";
-import { keccak256, stringToBytes, type Hex, type Address } from "viem";
+import {
+  encodeAbiParameters,
+  keccak256,
+  stringToBytes,
+  toBytes,
+  type Hex,
+  type Address,
+} from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 const facilitator = { url: "https://x402.org/facilitator" as const };
+const VERIFICATION_TAG = keccak256(toBytes("Bounty402Verification"));
 
 const NetworkSchema = z.enum([
   "base-sepolia",
@@ -32,6 +40,8 @@ const EnvSchema = z.object({
   RESOURCE_WALLET_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
   NETWORK: NetworkSchema.default("base-sepolia"),
   VALIDATOR_PRIVATE_KEY: z.string().regex(/^0x[a-fA-F0-9]{64}$/),
+  BOUNTY402_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
+  BOUNTY402_CHAIN_ID: z.coerce.number().int().positive().default(84532),
   PORT: z.coerce.number().default(8787),
 });
 
@@ -40,6 +50,8 @@ const ENV = EnvSchema.parse(process.env);
 const payTo = ENV.RESOURCE_WALLET_ADDRESS as Address;
 const network = ENV.NETWORK;
 const validator = privateKeyToAccount(ENV.VALIDATOR_PRIVATE_KEY as Hex);
+const bountyAddress = ENV.BOUNTY402_ADDRESS as Address;
+const chainId = BigInt(ENV.BOUNTY402_CHAIN_ID);
 
 const app = new Hono();
 
@@ -62,9 +74,10 @@ app.use(
 );
 
 const VerifyBody = z.object({
-  bountyId: z.string().min(1),
-  submissionHash: z.string().min(1),
-  artifactUrl: z.string().url().optional(),
+  bountyId: z.coerce.number().int().positive(),
+  submissionId: z.coerce.number().int().positive(),
+  claimant: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
+  artifactHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/),
 });
 
 app.post("/api/validator/verify", async (c) => {
@@ -76,13 +89,36 @@ app.post("/api/validator/verify", async (c) => {
   if (!xPayment) return c.json({ ok: false, error: "missing x-payment" }, 400);
   const jobId = keccak256(stringToBytes(xPayment));
 
-  const message = `Bounty402Verification\njobId=${jobId}\nbountyId=${parsed.data.bountyId}\nsubmission=${parsed.data.submissionHash}`;
-  const signature = await validator.signMessage({ message });
+  const digest = keccak256(
+    encodeAbiParameters(
+      [
+        { type: "bytes32" },
+        { type: "uint256" },
+        { type: "address" },
+        { type: "uint256" },
+        { type: "uint256" },
+        { type: "address" },
+        { type: "bytes32" },
+      ],
+      [
+        VERIFICATION_TAG,
+        chainId,
+        bountyAddress,
+        BigInt(parsed.data.bountyId),
+        BigInt(parsed.data.submissionId),
+        parsed.data.claimant as Address,
+        parsed.data.artifactHash as Hex,
+      ],
+    ),
+  );
+
+  const signature = await validator.signMessage({ message: { raw: digest } });
 
   return c.json({
     ok: true,
     jobId,
-    attestation: { validator: validator.address, signature, message },
+    digest,
+    attestation: { validator: validator.address, signature, digest },
     received: parsed.data,
     timestamp: new Date().toISOString(),
   });
