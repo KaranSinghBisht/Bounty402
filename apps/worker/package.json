@@ -1,0 +1,32 @@
+{
+  "name": "worker",
+  "private": true,
+  "version": "1.0.0",
+  "description": "",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "paytest": "tsx src/paytest.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.23.0",
+  "dependencies": {
+    "@coinbase/x402": "^0.7.3",
+    "@hono/node-server": "^1.19.6",
+    "dotenv": "^17.2.3",
+    "hono": "^4.10.7",
+    "viem": "^2.40.3",
+    "x402-fetch": "^0.7.3",
+    "x402-hono": "^0.7.3",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.25",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}
