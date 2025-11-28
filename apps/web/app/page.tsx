@@ -1,7 +1,7 @@
 // /web/app/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAccount, useChainId, useConnect, useDisconnect, useSwitchChain, useWalletClient } from "wagmi";
 import {
   createPublicClient,
@@ -15,16 +15,18 @@ import {
 import { baseSepolia } from "../lib/chain";
 import { bountyAbi, erc20Abi } from "../lib/abi";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { env } from "../lib/env";
 
 type Hash = `0x${string}`;
 
-const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || "https://sepolia.base.org";
-const bountyAddress = process.env.NEXT_PUBLIC_BOUNTY402_ADDRESS as Hash | undefined;
-const usdcAddress = process.env.NEXT_PUBLIC_USDC_ADDRESS as Hash | undefined;
-const submitterAddress = process.env.NEXT_PUBLIC_SUBMITTER_ADDRESS as Hash | undefined;
-const validatorAddress = process.env.NEXT_PUBLIC_VALIDATOR_ADDRESS as Hash | undefined;
-const chainIdEnv = Number(process.env.NEXT_PUBLIC_CHAIN_ID || baseSepolia.id);
+const rpcUrl = env.rpcUrl || "https://sepolia.base.org";
+const bountyAddress = (process.env.NEXT_PUBLIC_BOUNTY402_ADDRESS || env.bounty402Address) as Hash | undefined;
+const usdcAddress = (process.env.NEXT_PUBLIC_USDC_ADDRESS || env.usdcAddress) as Hash | undefined;
+const submitterAddress = (process.env.NEXT_PUBLIC_SUBMITTER_ADDRESS || env.submitterAddress) as Hash | undefined;
+const validatorAddress = (process.env.NEXT_PUBLIC_VALIDATOR_ADDRESS || env.validatorAddress) as Hash | undefined;
+const chainIdEnv = Number(process.env.NEXT_PUBLIC_CHAIN_ID || env.chainId || baseSepolia.id);
 const BOUNTY_CREATED_TOPIC0 = keccak256(toBytes("BountyCreated(uint256,address,address,uint256,uint64,bytes32)"));
+const explorerBase = "https://sepolia.basescan.org/tx/";
 
 function shortHash(h?: string) {
   if (!h) return "";
@@ -34,6 +36,7 @@ function shortHash(h?: string) {
 export default function Page() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { address, isConnected } = useAccount();
   const { connect, connectors, isPending: isConnectPending } = useConnect();
@@ -68,9 +71,28 @@ export default function Page() {
     txHash: Hash;
     artifact: string;
   } | null>(null);
-  const [claimInfo, setClaimInfo] = useState<{ signature: Hash; claimTxHash: Hash; verifyDigest?: Hash } | null>(
-    null,
-  );
+  const [claimInfo, setClaimInfo] = useState<{
+    signature: Hash;
+    claimTxHash: Hash;
+    verifyDigest?: Hash;
+    jobId?: Hash;
+    jobTxHash?: Hash;
+    jobError?: string | null;
+  } | null>(null);
+  const [statusLine, setStatusLine] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
+
+  const showErrorToast = useCallback((message: string) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast({ id: Date.now(), message });
+    toastTimer.current = setTimeout(() => setToast(null), 4000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+    };
+  }, []);
 
   const createMutation = useMutation({
     mutationFn: async () => {
@@ -136,6 +158,12 @@ export default function Page() {
       setCreateTx(createHash);
       return createHash;
     },
+    onMutate: () => setStatusLine("Creating bounty…"),
+    onSuccess: () => setStatusLine("Bounty created"),
+    onError: (err) => {
+      setStatusLine(null);
+      showErrorToast(err instanceof Error ? err.message : String(err));
+    },
   });
 
   const runMutation = useMutation({
@@ -159,6 +187,12 @@ export default function Page() {
       });
       return json;
     },
+    onMutate: () => setStatusLine("Running agent…"),
+    onSuccess: () => setStatusLine("Agent run submitted"),
+    onError: (err) => {
+      setStatusLine(null);
+      showErrorToast(err instanceof Error ? err.message : String(err));
+    },
   });
 
   const claimMutation = useMutation({
@@ -171,6 +205,7 @@ export default function Page() {
           bountyId,
           submissionId: submissionInfo.submissionId,
           artifactHash: submissionInfo.artifactHash,
+          client: address,
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -179,8 +214,21 @@ export default function Page() {
         const msg = json?.error?.message ?? json?.error ?? JSON.stringify(json);
         throw new Error(msg || `Request failed (${res.status})`);
       }
-      setClaimInfo({ signature: json.signature, claimTxHash: json.claimTxHash, verifyDigest: json.verifyDigest });
+      setClaimInfo({
+        signature: json.signature,
+        claimTxHash: json.claimTxHash,
+        verifyDigest: json.verifyDigest,
+        jobId: json.jobId,
+        jobTxHash: json.jobTxHash,
+        jobError: json.jobError ?? null,
+      });
       return json;
+    },
+    onMutate: () => setStatusLine("Verifying claim…"),
+    onSuccess: () => setStatusLine("Claim verified and submitted"),
+    onError: (err) => {
+      setStatusLine(null);
+      showErrorToast(err instanceof Error ? err.message : String(err));
     },
   });
 
@@ -231,12 +279,21 @@ export default function Page() {
             </>
           ) : (
             connectors.map((c) => (
-              <button key={c.id} disabled={isConnectPending} onClick={() => connect({ connector: c })}>
+              <button
+                key={c.id}
+                disabled={isConnectPending || createMutation.isPending}
+                onClick={() => connect({ connector: c })}
+              >
                 Connect {c.name}
               </button>
             ))
           )}
         </div>
+        {statusLine && (
+          <div className="small" style={{ color: "#2563eb" }}>
+            {statusLine}
+          </div>
+        )}
         <div className="grid">
           <div className="stack card">
             <h3>Step A · Create bounty</h3>
@@ -258,7 +315,14 @@ export default function Page() {
               <div className="small">
                 bountyId: <span className="mono">{bountyId}</span>
                 <br />
-                tx: <span className="mono">{shortHash(createTx || undefined)}</span>
+                tx:{" "}
+                {createTx ? (
+                  <a href={`${explorerBase}${createTx}`} target="_blank" rel="noreferrer" className="mono">
+                    {shortHash(createTx)}
+                  </a>
+                ) : (
+                  <span className="mono">{shortHash(createTx || undefined)}</span>
+                )}
               </div>
             )}
             {createMutation.error && <div className="small" style={{ color: "#b91c1c" }}>{`${createMutation.error}`}</div>}
@@ -274,7 +338,10 @@ export default function Page() {
             </select>
             <label>Prompt</label>
             <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={3} />
-            <button disabled={runMutation.isPending || bountyId == null} onClick={() => runMutation.mutate()}>
+            <button
+              disabled={runMutation.isPending || bountyId == null || createMutation.isPending}
+              onClick={() => runMutation.mutate()}
+            >
               {runMutation.isPending ? "Submitting…" : "Run Agent (server)"}
             </button>
             {submissionInfo && (
@@ -285,7 +352,7 @@ export default function Page() {
                 <br />
                 tx:{" "}
                 <a
-                  href={`https://sepolia.basescan.org/tx/${submissionInfo.txHash}`}
+                  href={`${explorerBase}${submissionInfo.txHash}`}
                   target="_blank"
                   rel="noreferrer"
                   className="mono"
@@ -300,7 +367,7 @@ export default function Page() {
           <div className="stack card">
             <h3>Step C · Verify + Claim</h3>
             <button
-              disabled={claimMutation.isPending || !submissionInfo}
+              disabled={claimMutation.isPending || !submissionInfo || runMutation.isPending}
               onClick={() => claimMutation.mutate()}
             >
               {claimMutation.isPending ? "Verifying…" : "Verify + Claim"}
@@ -309,7 +376,31 @@ export default function Page() {
               <div className="small">
                 signature: <span className="mono">{shortHash(claimInfo.signature)}</span>
                 <br />
-                claim tx: <span className="mono">{shortHash(claimInfo.claimTxHash)}</span>
+                claim tx:{" "}
+                <a href={`${explorerBase}${claimInfo.claimTxHash}`} target="_blank" rel="noreferrer" className="mono">
+                  {shortHash(claimInfo.claimTxHash)}
+                </a>
+                {claimInfo.jobTxHash && (
+                  <>
+                    <br />
+                    job tx:{" "}
+                    <a href={`${explorerBase}${claimInfo.jobTxHash}`} target="_blank" rel="noreferrer" className="mono">
+                      {shortHash(claimInfo.jobTxHash)}
+                    </a>
+                  </>
+                )}
+                {claimInfo.jobId && (
+                  <>
+                    <br />
+                    job id: <span className="mono">{shortHash(claimInfo.jobId)}</span>
+                  </>
+                )}
+                {claimInfo.jobError && (
+                  <>
+                    <br />
+                    <span style={{ color: "#b45309" }}>job warning: {claimInfo.jobError}</span>
+                  </>
+                )}
               </div>
             )}
             {claimMutation.error && <div className="small" style={{ color: "#b91c1c" }}>{`${claimMutation.error}`}</div>}
@@ -341,6 +432,26 @@ export default function Page() {
           <span className="small">Enter env vars to see balances.</span>
         )}
       </div>
+
+      {toast && (
+        <div
+          key={toast.id}
+          style={{
+            position: "fixed",
+            bottom: 16,
+            right: 16,
+            background: "#fef2f2",
+            color: "#991b1b",
+            padding: "12px 14px",
+            borderRadius: 8,
+            boxShadow: "0 4px 24px rgba(0,0,0,0.15)",
+            maxWidth: 320,
+          }}
+        >
+          <strong style={{ display: "block", marginBottom: 4 }}>Error</strong>
+          <span className="small">{toast.message}</span>
+        </div>
+      )}
     </div>
   );
 }

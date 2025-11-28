@@ -4,14 +4,18 @@ import { serve } from "@hono/node-server";
 import { z } from "zod";
 import { paymentMiddleware } from "x402-hono";
 import {
+  createPublicClient,
+  createWalletClient,
   encodeAbiParameters,
+  http,
   keccak256,
   stringToBytes,
   toBytes,
-  type Hex,
   type Address,
+  type Hex,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { baseSepolia } from "viem/chains";
 
 const facilitator = { url: "https://x402.org/facilitator" as const };
 const VERIFICATION_TAG = keccak256(toBytes("Bounty402Verification"));
@@ -42,16 +46,49 @@ const EnvSchema = z.object({
   VALIDATOR_PRIVATE_KEY: z.string().regex(/^0x[a-fA-F0-9]{64}$/),
   BOUNTY402_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
   BOUNTY402_CHAIN_ID: z.coerce.number().int().positive().default(84532),
+  AGENT_REGISTRY_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
+  USDC_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
+  RPC_URL: z.string().url().default("https://sepolia.base.org"),
   PORT: z.coerce.number().default(8787),
 });
 
-const ENV = EnvSchema.parse(process.env);
+const ENV = EnvSchema.parse({
+  ...process.env,
+  AGENT_REGISTRY_ADDRESS:
+    process.env.AGENT_REGISTRY_ADDRESS || process.env.NEXT_PUBLIC_AGENT_REGISTRY_ADDRESS || process.env.AGENT_REGISTRY,
+  USDC_ADDRESS: process.env.USDC_ADDRESS || process.env.NEXT_PUBLIC_USDC_ADDRESS,
+});
 
 const payTo = ENV.RESOURCE_WALLET_ADDRESS as Address;
 const network = ENV.NETWORK;
 const validator = privateKeyToAccount(ENV.VALIDATOR_PRIVATE_KEY as Hex);
 const bountyAddress = ENV.BOUNTY402_ADDRESS as Address;
 const chainId = BigInt(ENV.BOUNTY402_CHAIN_ID);
+const registryAddress = ENV.AGENT_REGISTRY_ADDRESS as Address;
+const paymentToken = ENV.USDC_ADDRESS as Address;
+const rpcUrl = ENV.RPC_URL;
+const JOB_PAYMENT_AMOUNT = 10_000n; // 0.01 USDC (6 decimals)
+
+const agentRegistryAbi = [
+  {
+    type: "function",
+    name: "registerJob",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "jobId", type: "bytes32" },
+      { name: "agent", type: "address" },
+      { name: "client", type: "address" },
+      { name: "token", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [],
+  },
+] as const;
+
+const chain = baseSepolia.id === Number(chainId) ? baseSepolia : { ...baseSepolia, id: Number(chainId) };
+const transport = http(rpcUrl);
+const walletClient = createWalletClient({ account: validator, chain, transport });
+const publicClient = createPublicClient({ chain, transport });
 
 const app = new Hono();
 
@@ -78,6 +115,8 @@ const VerifyBody = z.object({
   submissionId: z.coerce.number().int().positive(),
   claimant: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
   artifactHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/),
+  client: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
+  declaredClient: z.string().regex(/^0x[a-fA-F0-9]{40}$/).nullable().optional(),
 });
 
 app.post("/api/validator/verify", async (c) => {
@@ -88,6 +127,8 @@ app.post("/api/validator/verify", async (c) => {
   const xPayment = c.req.header("x-payment");
   if (!xPayment) return c.json({ ok: false, error: "missing x-payment" }, 400);
   const jobId = keccak256(stringToBytes(xPayment));
+  const jobClient = parsed.data.client as Address;
+  const agent = parsed.data.claimant as Address;
 
   const digest = keccak256(
     encodeAbiParameters(
@@ -114,9 +155,28 @@ app.post("/api/validator/verify", async (c) => {
 
   const signature = await validator.signMessage({ message: { raw: digest } });
 
+  let jobTxHash: Hex | null = null;
+  let jobError: string | null = null;
+
+  try {
+    const txHash = await walletClient.writeContract({
+      address: registryAddress,
+      abi: agentRegistryAbi,
+      functionName: "registerJob",
+      args: [jobId, agent, jobClient, paymentToken, JOB_PAYMENT_AMOUNT],
+    });
+    await publicClient.waitForTransactionReceipt({ hash: txHash });
+    jobTxHash = txHash;
+  } catch (err) {
+    console.error("registerJob failed", err);
+    jobError = (err as Error)?.message ?? String(err);
+  }
+
   return c.json({
     ok: true,
     jobId,
+    jobTxHash,
+    jobError,
     digest,
     attestation: { validator: validator.address, signature, digest },
     received: parsed.data,
