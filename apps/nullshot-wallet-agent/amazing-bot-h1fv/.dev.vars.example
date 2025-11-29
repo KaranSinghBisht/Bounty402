@@ -1,0 +1,12 @@
+# Copy this to .dev.vars for local wrangler dev
+AI_PROVIDER=google
+MODEL_ID=gemini-2.5-flash
+
+# Secrets: set these in .dev.vars (local) or `wrangler secret put ...` (prod)
+AI_PROVIDER_API_KEY=
+
+# Wallet tool config (Base Sepolia)
+RPC_URL=
+CHAIN_ID=84532
+USDC_ADDRESS=0x036CbD53842c5426634e7929541eC2318f3dCF7e
+BASESCAN_API_KEY=
