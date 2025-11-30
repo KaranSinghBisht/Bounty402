@@ -1,540 +1,294 @@
 // /web/app/page.tsx
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPublicClient, decodeEventLog, formatUnits, http, keccak256, parseUnits, toBytes, type Address } from "viem";
-import { baseSepolia } from "../lib/chain";
-import { bountyAbi, erc20Abi } from "../lib/abi";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { env } from "../lib/env";
-import { useEvmWallet } from "@/lib/useEvmWallet";
-import { agentRegistryAbi } from "@/lib/agentRegistryAbi";
+import Link from "next/link";
+import { motion } from "framer-motion";
+import { Activity, ArrowRight, CheckCircle2, Cpu, Globe, Lock, Shield, Sparkles, Zap } from "lucide-react";
+import { Background } from "@/components/shared/Background";
+import { Card, buttonClasses } from "@/components/ui/Primitives";
+import { cn } from "@/lib/ui-utils";
 
-type Hash = `0x${string}`;
+const LiveTerminal = () => {
+  return (
+    <Card className="w-full max-w-sm mx-auto overflow-hidden border-white/10 bg-[#0E1116] shadow-2xl relative z-10 font-mono text-xs">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-white/5 bg-white/[0.02]">
+        <div className="flex gap-1.5">
+          <div className="w-2.5 h-2.5 rounded-full bg-red-500/20 border border-red-500/50" />
+          <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/20 border border-yellow-500/50" />
+          <div className="w-2.5 h-2.5 rounded-full bg-green-500/20 border border-green-500/50" />
+        </div>
+        <span className="text-muted-foreground/50">agent_execution_v1.sh</span>
+      </div>
+      <div className="p-4 space-y-2 h-[220px] overflow-hidden text-muted-foreground">
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.5 }}>
+          <span className="text-green-500">➜</span> Initializing <span className="text-white">Bounty402_Core</span>...
+        </motion.div>
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 1.2 }}>
+          <span className="text-blue-500">ℹ</span> Escrow deployed at <span className="text-white">0x7a39...2b91</span>
+        </motion.div>
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 2.5 }}>
+          <span className="text-yellow-500">⚠</span> Analyzing transaction batch [pending]
+        </motion.div>
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 4 }}>
+          Processing 128kb of calldata...
+        </motion.div>
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 5.5 }}
+          className="text-emerald-400"
+        >
+          <span className="text-green-500">✔</span> Verification Proof Generated
+        </motion.div>
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: [0, 1, 0] }}
+          transition={{ duration: 1, repeat: Infinity, delay: 6 }}
+          className="w-2 h-4 bg-primary inline-block align-middle ml-1"
+        />
+      </div>
+    </Card>
+  );
+};
 
-const rpcUrl = env.rpcUrl || "https://sepolia.base.org";
-const bountyAddress = (process.env.NEXT_PUBLIC_BOUNTY402_ADDRESS || env.bounty402Address) as Hash | undefined;
-const usdcAddress = (process.env.NEXT_PUBLIC_USDC_ADDRESS || env.usdcAddress) as Hash | undefined;
-const submitterAddress = (process.env.NEXT_PUBLIC_SUBMITTER_ADDRESS || env.submitterAddress) as Hash | undefined;
-const validatorAddress = (process.env.NEXT_PUBLIC_VALIDATOR_ADDRESS || env.validatorAddress) as Hash | undefined;
-const registryAddress = (process.env.NEXT_PUBLIC_AGENT_REGISTRY_ADDRESS || env.agentRegistryAddress) as Hash | undefined;
-const chainIdEnv = Number(process.env.NEXT_PUBLIC_CHAIN_ID || env.chainId || baseSepolia.id);
-const BOUNTY_CREATED_TOPIC0 = keccak256(toBytes("BountyCreated(uint256,address,address,uint256,uint64,bytes32)"));
-const explorerBase = "https://sepolia.basescan.org/tx/";
-const SAMPLE_TXS: Hash[] = [
-  "0x122e259d5cf722bccd227fc853537df12c4b58e7c7fd6b3382211cf8e592f4e5",
-];
-
-function shortHash(h?: string) {
-  if (!h) return "";
-  return `${h.slice(0, 6)}…${h.slice(-4)}`;
-}
+const Marquee = () => {
+  const items = ["x402", "Base Sepolia", "On-chain Escrow", "Agent Registry", "Nullshot AI", "Tx Decoder", "Wallet Profiler"];
+  return (
+    <div className="w-full overflow-hidden border-y border-white/5 bg-white/[0.01] py-6 relative">
+      <div className="absolute inset-y-0 left-0 w-32 bg-gradient-to-r from-background to-transparent z-10" />
+      <div className="absolute inset-y-0 right-0 w-32 bg-gradient-to-l from-background to-transparent z-10" />
+      <motion.div
+        className="flex gap-16 whitespace-nowrap min-w-full"
+        animate={{ x: ["0%", "-50%"] }}
+        transition={{ duration: 20, ease: "linear", repeat: Infinity }}
+      >
+        {[...items, ...items, ...items].map((item, i) => (
+          <span key={item + i} className="text-lg font-bold text-muted-foreground/30 uppercase tracking-widest">
+            {item}
+          </span>
+        ))}
+      </motion.div>
+    </div>
+  );
+};
 
 export default function Page() {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const { address, chainId, isConnected, walletClient, connect, switchToBaseSepolia } = useEvmWallet();
-  const connected = mounted && isConnected;
-  const wrongChain = connected && chainId !== baseSepolia.id;
-
-  const publicClient = useMemo(
-    () =>
-      createPublicClient({
-        chain: baseSepolia,
-        transport: http(rpcUrl),
-      }),
-    [],
-  );
-
-  const [reward, setReward] = useState("0.01");
-  const [deadlineDays, setDeadlineDays] = useState(7);
-  const [specText, setSpecText] = useState("Build something cool with Bounty402");
-
-  const [bountyId, setBountyId] = useState<number | null>(null);
-  const [createTx, setCreateTx] = useState<Hash | null>(null);
-  const [txHashInput, setTxHashInput] = useState<Hash | "">("");
-  const [submissionInfo, setSubmissionInfo] = useState<{
-    submissionId: number;
-    artifactHash: Hash;
-    submitTxHash: Hash;
-    sessionId: string;
-    txSummary: any;
-  } | null>(null);
-  const [claimInfo, setClaimInfo] = useState<{
-    signature: Hash;
-    claimTxHash: Hash;
-    verifyDigest?: Hash;
-    jobId?: Hash;
-    jobTxHash?: Hash;
-    jobError?: string | null;
-    requestId?: string;
-    x402?: any;
-  } | null>(null);
-  const [statusLine, setStatusLine] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
-  const [feedbackRating, setFeedbackRating] = useState(5);
-  const [feedbackCommentUri, setFeedbackCommentUri] = useState("");
-  const [feedbackTx, setFeedbackTx] = useState<Hash | null>(null);
-  const txLink = txHashInput && /^0x[a-fA-F0-9]{64}$/.test(txHashInput) ? `${explorerBase}${txHashInput}` : null;
-
-  const showErrorToast = useCallback((message: string) => {
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    setToast({ id: Date.now(), message });
-    toastTimer.current = setTimeout(() => setToast(null), 4000);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (toastTimer.current) clearTimeout(toastTimer.current);
-    };
-  }, []);
-
-  const createMutation = useMutation({
-    mutationFn: async () => {
-      if (!walletClient || !address) throw new Error("Connect wallet first");
-      if (!bountyAddress || !usdcAddress) throw new Error("Missing contract addresses");
-      if (!validatorAddress) throw new Error("Missing NEXT_PUBLIC_VALIDATOR_ADDRESS");
-      if (wrongChain) throw new Error("Wrong network. Switch MetaMask to Base Sepolia (84532).");
-      const rewardUnits = parseUnits(reward, 6);
-      const deadlineTs = BigInt(Math.floor(Date.now() / 1000) + deadlineDays * 24 * 60 * 60);
-      const specHash = keccak256(toBytes(specText));
-
-      const approveHash = await walletClient.writeContract({
-        address: usdcAddress,
-        abi: erc20Abi,
-        functionName: "approve",
-        args: [bountyAddress, rewardUnits],
-        chain: baseSepolia,
-        account: address as Address,
-      });
-      const approveReceipt = await publicClient.waitForTransactionReceipt({ hash: approveHash });
-      if (approveReceipt.status !== "success") {
-        throw new Error("USDC approve reverted");
-      }
-
-      const sim = await publicClient.simulateContract({
-        address: bountyAddress,
-        abi: bountyAbi,
-        functionName: "createBountyWithValidator",
-        args: [usdcAddress, rewardUnits, deadlineTs, specHash, validatorAddress],
-        account: address as Address,
-      });
-
-      const createHash = await walletClient.writeContract(sim.request);
-      const receipt = await publicClient.waitForTransactionReceipt({ hash: createHash });
-      if (receipt.status !== "success") {
-        throw new Error("createBountyWithValidator reverted (check USDC balance/allowance)");
-      }
-
-      const createdId = Number(sim.result);
-
-      setBountyId(createdId);
-      setCreateTx(createHash);
-      return createHash;
-    },
-    onMutate: () => setStatusLine("Creating bounty…"),
-    onSuccess: () => setStatusLine("Bounty created"),
-    onError: (err) => {
-      setStatusLine(null);
-      showErrorToast(err instanceof Error ? err.message : String(err));
-    },
-  });
-
-  const runMutation = useMutation({
-    mutationFn: async () => {
-      if (bountyId == null) throw new Error("Create a bounty first");
-      if (!txHashInput || !/^0x[a-fA-F0-9]{64}$/.test(txHashInput)) throw new Error("Enter a valid tx hash");
-
-      const res = await fetch("/api/agent/run", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ bountyId, txHash: txHashInput }),
-      });
-
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const msg = typeof json.error === "string" ? json.error : JSON.stringify(json.error ?? json);
-        throw new Error(msg || `Request failed (${res.status})`);
-      }
-
-      setSubmissionInfo({
-        submissionId: json.submissionId,
-        artifactHash: json.artifactHash,
-        submitTxHash: json.submitTxHash,
-        sessionId: json.sessionId,
-        txSummary: json.txSummary,
-      });
-
-      return json;
-    },
-    onMutate: () => setStatusLine("Running agent…"),
-    onSuccess: () => setStatusLine("Agent run submitted"),
-    onError: (err) => {
-      setStatusLine(null);
-      showErrorToast(err instanceof Error ? err.message : String(err));
-    },
-  });
-
-  const claimMutation = useMutation({
-    mutationFn: async () => {
-      if (bountyId == null || !submissionInfo) throw new Error("Missing bounty or submission");
-      const res = await fetch("/api/agent/verify-claim", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          bountyId,
-          submissionId: submissionInfo.submissionId,
-          artifactHash: submissionInfo.artifactHash,
-          client: address,
-        }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        console.error("verify-claim failed:", res.status, json);
-        const msg = json?.error?.message ?? json?.error ?? JSON.stringify(json);
-        throw new Error(msg || `Request failed (${res.status})`);
-      }
-      setClaimInfo({
-        signature: json.signature,
-        claimTxHash: json.claimTxHash,
-        verifyDigest: json.verifyDigest,
-        jobId: json.jobId,
-        jobTxHash: json.jobTxHash,
-        jobError: json.jobError ?? null,
-        requestId: json.requestId,
-        x402: json.x402 ?? null,
-      });
-      setFeedbackTx(null);
-      setFeedbackCommentUri("");
-      setFeedbackRating(5);
-      return json;
-    },
-    onMutate: () => setStatusLine("Verifying claim…"),
-    onSuccess: () => setStatusLine("Claim verified and submitted"),
-    onError: (err) => {
-      setStatusLine(null);
-      showErrorToast(err instanceof Error ? err.message : String(err));
-    },
-  });
-
-  const feedbackMutation = useMutation({
-    mutationFn: async () => {
-      if (!claimInfo?.jobId) throw new Error("Missing jobId");
-      if (!walletClient || !address) throw new Error("Connect wallet first");
-      if (wrongChain) throw new Error("Wrong network. Switch MetaMask to Base Sepolia (84532).");
-      if (!registryAddress) throw new Error("Missing NEXT_PUBLIC_AGENT_REGISTRY_ADDRESS");
-
-      const txHash = await walletClient.writeContract({
-        address: registryAddress,
-        abi: agentRegistryAbi,
-        functionName: "submitFeedback",
-        args: [claimInfo.jobId, feedbackRating, feedbackCommentUri],
-        chain: baseSepolia,
-        account: address as Address,
-      });
-
-      await publicClient.waitForTransactionReceipt({ hash: txHash });
-      setFeedbackTx(txHash);
-      return txHash;
-    },
-    onMutate: () => {
-      setStatusLine("Submitting feedback…");
-      setFeedbackTx(null);
-    },
-    onSuccess: () => setStatusLine("Feedback submitted"),
-    onError: (err) => {
-      setStatusLine(null);
-      showErrorToast(err instanceof Error ? err.message : String(err));
-    },
-  });
-
-  const balancesQuery = useQuery({
-    queryKey: ["balances", address, submitterAddress],
-    queryFn: async () => {
-      if (!usdcAddress || !bountyAddress) return null;
-      const [contractBal, creatorBal, submitterBal, decimalsRaw] = await Promise.all([
-        publicClient.readContract({ address: usdcAddress, abi: erc20Abi, functionName: "balanceOf", args: [bountyAddress] }),
-        address
-          ? publicClient.readContract({
-              address: usdcAddress,
-              abi: erc20Abi,
-              functionName: "balanceOf",
-              args: [address],
-            })
-          : Promise.resolve(0n),
-        submitterAddress
-          ? publicClient.readContract({
-              address: usdcAddress,
-              abi: erc20Abi,
-              functionName: "balanceOf",
-              args: [submitterAddress],
-            })
-          : Promise.resolve(0n),
-        publicClient.readContract({ address: usdcAddress, abi: erc20Abi, functionName: "decimals" }),
-      ]);
-      const dec = Number(decimalsRaw);
-      return {
-        contract: formatUnits(contractBal as bigint, dec as number),
-        creator: formatUnits(creatorBal as bigint, dec as number),
-        submitter: submitterAddress ? formatUnits(submitterBal as bigint, dec as number) : null,
-      };
-    },
-    refetchInterval: 10_000,
-  });
-
   return (
-    <div className="stack" style={{ gap: 16 }}>
-      <div className="card stack">
-        <div className="row">
-          <strong>Wallet:</strong>
-          {!mounted ? <span className="small">Loading…</span> : connected ? (
-            <span className="mono">{shortHash(address ?? undefined)}</span>
-          ) : (
-            <button disabled={createMutation.isPending} onClick={() => connect()}>
-              Connect MetaMask
-            </button>
-          )}
-        </div>
-        {statusLine && (
-          <div className="small" style={{ color: "#2563eb" }}>
-            {statusLine}
+    <div className="min-h-screen relative overflow-x-hidden">
+      <Background />
+
+      <nav className="fixed top-0 inset-x-0 z-50 border-b border-white/5 bg-background/60 backdrop-blur-lg">
+        <div className="max-w-7xl mx-auto px-6 h-16 flex justify-between items-center">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center font-bold text-white shadow-lg shadow-primary/20">
+              B
+            </div>
+            <span className="text-lg font-bold tracking-tight text-white">Bounty402</span>
           </div>
-        )}
-        <div className="grid">
-          <div className="stack card">
-            <h3>Step A · Create bounty</h3>
-            <label>Reward (USDC)</label>
-            <input value={reward} onChange={(e) => setReward(e.target.value)} />
-            <label>Deadline (days)</label>
-            <input type="number" value={deadlineDays} onChange={(e) => setDeadlineDays(Number(e.target.value))} />
-            <label>Spec</label>
-            <textarea value={specText} onChange={(e) => setSpecText(e.target.value)} rows={3} />
-            {wrongChain && (
-              <button onClick={() => switchToBaseSepolia()}>Switch to Base Sepolia</button>
-            )}
-            <button disabled={createMutation.isPending || wrongChain} onClick={() => createMutation.mutate()}>
-              {createMutation.isPending ? "Creating…" : "Approve + Create"}
-            </button>
-            {bountyId != null && (
-              <div className="small">
-                bountyId: <span className="mono">{bountyId}</span>
-                <br />
-                tx:{" "}
-                {createTx ? (
-                  <a href={`${explorerBase}${createTx}`} target="_blank" rel="noreferrer" className="mono">
-                    {shortHash(createTx)}
-                  </a>
-                ) : (
-                  <span className="mono">{shortHash(createTx || undefined)}</span>
-                )}
-              </div>
-            )}
-            {createMutation.error && <div className="small" style={{ color: "#b91c1c" }}>{`${createMutation.error}`}</div>}
-          </div>
-
-          <div className="stack card">
-            <h3>Step B · Run tx-explainer</h3>
-
-            <label>Transaction hash (Base Sepolia)</label>
-            <input
-              className="mono"
-              placeholder="0x…"
-              value={txHashInput}
-              onChange={(e) => setTxHashInput(e.target.value as any)}
-            />
-            <div className="row" style={{ gap: 8 }}>
-              <button
-                disabled={!SAMPLE_TXS.length}
-                onClick={() => setTxHashInput(SAMPLE_TXS[0])}
-              >
-                Use sample tx
-              </button>
-
-              {txLink && (
-                <a href={txLink} target="_blank" rel="noreferrer" className="mono small">
-                  Open tx ↗
-                </a>
+          <div className="flex gap-3">
+            <Link
+              href="/marketplace"
+              className={cn(
+                buttonClasses("ghost", "sm"),
+                "hidden sm:inline-flex text-muted-foreground hover:text-white",
               )}
+            >
+              Protocol Stats
+            </Link>
+            <Link
+              href="/my-agent"
+              className={cn(
+                buttonClasses("glass", "sm"),
+                "border-primary/20 hover:border-primary/40 text-primary-foreground bg-primary/10 hover:bg-primary/20",
+              )}
+            >
+              Launch App
+            </Link>
+          </div>
+        </div>
+      </nav>
+
+      <section className="relative pt-32 pb-20 lg:pt-48 lg:pb-32 px-6">
+        <div className="max-w-7xl mx-auto grid lg:grid-cols-2 gap-12 items-center">
+          <motion.div
+            initial={{ opacity: 0, y: 30 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.8 }}
+            className="text-center lg:text-left"
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: 0.2 }}
+              className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-primary/20 bg-primary/5 text-primary text-xs font-mono mb-6"
+            >
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
+              </span>
+              Live: Base Sepolia
+            </motion.div>
+
+            <h1 className="text-5xl lg:text-7xl font-bold tracking-tight mb-6 leading-[1.1]">
+              Pay-per-task <br />
+              <span className="text-gradient-primary">AI Agents On-Chain</span>
+            </h1>
+
+            <p className="text-xl text-muted-foreground mb-10 leading-relaxed max-w-2xl mx-auto lg:mx-0">
+              Decentralized automation for the specialized web. Fund bounties, execute logic off-chain, and verify proofs
+              on-chain.
+            </p>
+
+            <div className="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start">
+              <Link
+                href="/my-agent"
+                className={cn(buttonClasses("default", "lg"), "w-full sm:w-auto text-base font-semibold shadow-2xl shadow-primary/20")}
+              >
+                Start Building <ArrowRight className="ml-2 w-4 h-4" />
+              </Link>
+              <Link href="/marketplace" className={cn(buttonClasses("glass", "lg"), "w-full sm:w-auto text-base")}>
+                View Marketplace
+              </Link>
             </div>
 
-            <button
-              disabled={runMutation.isPending || bountyId == null || createMutation.isPending}
-              onClick={() => runMutation.mutate()}
-            >
-              {runMutation.isPending ? "Submitting…" : "Run Agent (server)"}
-            </button>
-            {submissionInfo && (
-              <div className="small stack" style={{ gap: 8 }}>
-                <div>
-                  submissionId: <span className="mono">{submissionInfo.submissionId}</span>
-                  <br />
-                  artifactHash: <span className="mono">{shortHash(submissionInfo.artifactHash)}</span>
-                  <br />
-                  sessionId: <span className="mono">{submissionInfo.sessionId}</span>
-                  <br />
-                  tx:{" "}
-                  <a
-                    href={`${explorerBase}${submissionInfo.submitTxHash}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mono"
-                  >
-                    {shortHash(submissionInfo.submitTxHash)}
-                  </a>
+            <div className="mt-12 flex items-center justify-center lg:justify-start gap-8 text-sm text-muted-foreground/60">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-primary" /> x402 Payments
+              </div>
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-primary" /> Base Sepolia
+              </div>
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-primary" /> Agent Registry
+              </div>
+            </div>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.4, duration: 0.8 }}
+            className="relative hidden lg:block"
+          >
+            <div className="absolute inset-0 bg-gradient-to-tr from-primary/10 to-transparent blur-3xl" />
+            <LiveTerminal />
+
+            <motion.div animate={{ y: [0, -10, 0] }} transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }} className="absolute -top-12 -right-8">
+              <Card className="p-4 flex items-center gap-3 backdrop-blur-xl bg-black/60 border-white/10">
+                <div className="p-2 rounded-lg bg-emerald-500/10">
+                  <Shield className="w-5 h-5 text-emerald-400" />
                 </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Demo Overlay</div>
+                  <div className="text-sm font-bold text-white">Mock status</div>
+                </div>
+              </Card>
+            </motion.div>
 
-                <details>
-                  <summary className="mono">txSummary JSON</summary>
-                  <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", marginTop: 8 }}>
-                    {JSON.stringify(submissionInfo.txSummary, null, 2)}
-                  </pre>
-                </details>
-              </div>
-            )}
-            {runMutation.error && <div className="small" style={{ color: "#b91c1c" }}>{`${runMutation.error}`}</div>}
-          </div>
-
-          <div className="stack card">
-            <h3>Step C · Verify + Claim</h3>
-            <button
-              disabled={claimMutation.isPending || !submissionInfo || runMutation.isPending}
-              onClick={() => claimMutation.mutate()}
+            <motion.div
+              animate={{ y: [0, 10, 0] }}
+              transition={{ duration: 5, repeat: Infinity, ease: "easeInOut", delay: 1 }}
+              className="absolute -bottom-8 -left-8"
             >
-              {claimMutation.isPending ? "Verifying…" : "Verify + Claim"}
-            </button>
-            {claimInfo && (
-              <div className="small">
-                signature: <span className="mono">{shortHash(claimInfo.signature)}</span>
-                <br />
-                claim tx:{" "}
-                <a href={`${explorerBase}${claimInfo.claimTxHash}`} target="_blank" rel="noreferrer" className="mono">
-                  {shortHash(claimInfo.claimTxHash)}
-                </a>
-                {claimInfo.jobTxHash && (
-                  <>
-                    <br />
-                    job tx:{" "}
-                    <a href={`${explorerBase}${claimInfo.jobTxHash}`} target="_blank" rel="noreferrer" className="mono">
-                      {shortHash(claimInfo.jobTxHash)}
-                    </a>
-                  </>
-                )}
-                {claimInfo.jobId && (
-                  <>
-                    <br />
-                    job id: <span className="mono">{shortHash(claimInfo.jobId)}</span>
-                  </>
-                )}
-                {claimInfo.jobError && (
-                  <>
-                    <br />
-                    <span style={{ color: "#b45309" }}>job warning: {claimInfo.jobError}</span>
-                  </>
-                )}
-                {!claimInfo.jobTxHash && (
-                  <div className="small" style={{ color: "#b91c1c", marginTop: 8 }}>
-                    Job registration missing; feedback may fail. Check worker logs/registrar setup.
-                  </div>
-                )}
-                {claimInfo.x402 && (
-                  <details style={{ marginTop: 8 }}>
-                    <summary className="mono">x402 quote</summary>
-                    <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", marginTop: 8 }}>
-                      {JSON.stringify(claimInfo.x402, null, 2)}
-                    </pre>
-                  </details>
-                )}
-                {claimInfo.requestId && (
-                  <div className="small mono" style={{ marginTop: 8 }}>
-                    requestId: {claimInfo.requestId}
-                  </div>
-                )}
+              <Card className="p-4 flex items-center gap-3 backdrop-blur-xl bg-black/60 border-white/10">
+                <div className="p-2 rounded-lg bg-blue-500/10">
+                  <Zap className="w-5 h-5 text-blue-400" />
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Execution Time</div>
+                  <div className="text-sm font-bold text-white">Mocked</div>
+                </div>
+              </Card>
+            </motion.div>
+          </motion.div>
+        </div>
+      </section>
+
+      <Marquee />
+
+      <section className="py-24 px-6 max-w-7xl mx-auto">
+        <div className="text-center mb-16">
+          <h2 className="text-3xl font-bold mb-4">Protocol Features</h2>
+          <p className="text-muted-foreground max-w-2xl mx-auto">
+            Honest demo of the Base Sepolia flow—wire your APIs for real runs.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <motion.div whileHover={{ y: -4 }} className="md:col-span-2">
+            <Card className="h-full p-8 flex flex-col justify-between bg-gradient-to-br from-[#11141d] to-[#0d0f14] border-white/5 relative overflow-hidden group">
+              <div className="absolute top-0 right-0 p-32 bg-primary/5 blur-[100px] rounded-full group-hover:bg-primary/10 transition-colors" />
+              <div className="relative z-10">
+                <div className="w-12 h-12 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center mb-6">
+                  <Cpu className="w-6 h-6 text-primary" />
+                </div>
+                <h3 className="text-2xl font-bold mb-2">Wallet-based Access</h3>
+                <p className="text-muted-foreground max-w-md">
+                  Connect an EVM wallet and run agents via x402 payments on Base Sepolia.
+                </p>
               </div>
-            )}
-            {claimInfo?.jobId && (
-              <div className="card stack" style={{ marginTop: 12, gap: 8 }}>
-                <h4>Feedback</h4>
-                <label>Rating</label>
-                <select value={feedbackRating} onChange={(e) => setFeedbackRating(Number(e.target.value))}>
-                  {[1, 2, 3, 4, 5].map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
+            </Card>
+          </motion.div>
+
+          <motion.div whileHover={{ y: -4 }} className="md:row-span-2">
+            <Card className="h-full p-8 bg-[#0E1116] border-white/5 relative overflow-hidden">
+              <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20" />
+              <div className="relative z-10">
+                <div className="w-12 h-12 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center mb-6">
+                  <Lock className="w-6 h-6 text-secondary" />
+                </div>
+                <h3 className="text-xl font-bold mb-2">API-Driven Runs</h3>
+                <p className="text-muted-foreground mb-8">
+                  This demo calls your Next.js routes for job execution and verification (wire in your handlers next).
+                </p>
+
+                <div className="space-y-3">
+                  {["Create bounty", "Run agent", "Verify claim"].map((label) => (
+                    <div key={label} className="flex items-center gap-3 p-3 rounded-lg bg-white/5 text-xs font-mono">
+                      <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                      <span className="opacity-50">{label}</span>
+                      <span className="ml-auto text-emerald-400">Pending wiring</span>
+                    </div>
                   ))}
-                </select>
-                <label>Comment URI (optional)</label>
-                <input
-                  placeholder="ipfs://... or https://..."
-                  value={feedbackCommentUri}
-                  onChange={(e) => setFeedbackCommentUri(e.target.value)}
-                />
-                <button
-                  disabled={feedbackMutation.isPending || wrongChain || !connected}
-                  onClick={() => feedbackMutation.mutate()}
-                >
-                  {feedbackMutation.isPending ? "Submitting…" : "Submit feedback"}
-                </button>
-                {feedbackTx && (
-                  <div className="small">
-                    tx:{" "}
-                    <a href={`${explorerBase}${feedbackTx}`} target="_blank" rel="noreferrer" className="mono">
-                      {shortHash(feedbackTx)}
-                    </a>
-                  </div>
-                )}
+                </div>
               </div>
-            )}
-            {claimMutation.error && <div className="small" style={{ color: "#b91c1c" }}>{`${claimMutation.error}`}</div>}
+            </Card>
+          </motion.div>
+
+          <motion.div whileHover={{ y: -4 }}>
+            <Card className="p-8 bg-[#0F1219]">
+              <Globe className="w-8 h-8 text-blue-400 mb-4" />
+              <h3 className="font-bold mb-2">Base Network</h3>
+              <p className="text-sm text-muted-foreground">Built for Base Sepolia today; upgrade to mainnet later.</p>
+            </Card>
+          </motion.div>
+
+          <motion.div whileHover={{ y: -4 }}>
+            <Card className="p-8 bg-[#0F1219]">
+              <Activity className="w-8 h-8 text-purple-400 mb-4" />
+              <h3 className="font-bold mb-2">Roadmap</h3>
+              <p className="text-sm text-muted-foreground">Proofs/TEEs are future work</p>
+            </Card>
+          </motion.div>
+        </div>
+      </section>
+
+      <footer className="border-t border-white/5 py-12 bg-black/50 backdrop-blur-sm">
+        <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6">
+          <p className="text-sm text-muted-foreground">© 2024 Bounty402 Protocol. All rights reserved.</p>
+          <div className="flex gap-6 text-sm text-muted-foreground">
+            <a href="#" className="hover:text-primary transition-colors">
+              Terms
+            </a>
+            <a href="#" className="hover:text-primary transition-colors">
+              Privacy
+            </a>
+            <a href="#" className="hover:text-primary transition-colors">
+              Documentation
+            </a>
           </div>
         </div>
-      </div>
-
-      <div className="card stack">
-        <div className="row" style={{ justifyContent: "space-between" }}>
-          <strong>Balances (USDC)</strong>
-          <span className="small">Chain: Base Sepolia (id {chainIdEnv})</span>
-        </div>
-        {balancesQuery.data ? (
-          <div className="grid">
-            <div className="stack">
-              <span className="small">Contract</span>
-              <span className="mono">{balancesQuery.data.contract}</span>
-            </div>
-            <div className="stack">
-              <span className="small">Creator (connected)</span>
-              <span className="mono">{balancesQuery.data.creator}</span>
-            </div>
-            <div className="stack">
-              <span className="small">Submitter (server)</span>
-              <span className="mono">{balancesQuery.data.submitter ?? "n/a"}</span>
-            </div>
-          </div>
-        ) : (
-          <span className="small">Enter env vars to see balances.</span>
-        )}
-      </div>
-
-      {toast && (
-        <div
-          key={toast.id}
-          style={{
-            position: "fixed",
-            bottom: 16,
-            right: 16,
-            background: "#fef2f2",
-            color: "#991b1b",
-            padding: "12px 14px",
-            borderRadius: 8,
-            boxShadow: "0 4px 24px rgba(0,0,0,0.15)",
-            maxWidth: 320,
-          }}
-        >
-          <strong style={{ display: "block", marginBottom: 4 }}>Error</strong>
-          <span className="small">{toast.message}</span>
-        </div>
-      )}
+      </footer>
     </div>
   );
 }

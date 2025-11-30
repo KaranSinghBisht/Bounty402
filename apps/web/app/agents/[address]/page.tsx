@@ -2,190 +2,125 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { createPublicClient, http, isAddress, type Address } from "viem";
-import { baseSepolia } from "@/lib/chain";
-import { env } from "@/lib/env";
-import { agentRegistryAbi } from "@/lib/agentRegistryAbi";
+import { motion } from "framer-motion";
+import { Activity, ArrowLeft, CheckCircle, ShieldCheck, Zap } from "lucide-react";
+import { AppShell } from "@/components/layout/AppShell";
+import { JobFlow } from "@/components/features/JobFlow";
+import { Badge, Card, buttonClasses } from "@/components/ui/Primitives";
+import { AGENTS } from "@/data/agents";
+import { cn } from "@/lib/ui-utils";
 
-const explorerBase = "https://sepolia.basescan.org/address/";
+export default function AgentDetailPage({ params }: { params: { address: string } }) {
+  const agent = AGENTS.find((a) => a.id === params.address);
 
-export default function AgentProfilePage({ params }: { params: { address: string } }) {
-  const address = params.address;
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [agentData, setAgentData] = useState<any>(null);
-  const [avgRating, setAvgRating] = useState(0);
-  const [metadataUri, setMetadataUri] = useState("");
-  const [metadataJson, setMetadataJson] = useState<any | null>(null);
-
-  const rpcUrl = useMemo(() => process.env.NEXT_PUBLIC_RPC_URL || env.rpcUrl || null, []);
-  const registryAddress = useMemo(
-    () => (process.env.NEXT_PUBLIC_AGENT_REGISTRY_ADDRESS || env.agentRegistryAddress) as Address | undefined,
-    [],
-  );
-
-  const publicClient = useMemo(
-    () => (rpcUrl && registryAddress ? createPublicClient({ chain: baseSepolia, transport: http(rpcUrl) }) : null),
-    [registryAddress, rpcUrl],
-  );
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (!isAddress(address)) {
-        setError("Invalid address");
-        setLoading(false);
-        return;
-      }
-      if (!publicClient || !registryAddress || !rpcUrl) {
-        setError("Missing RPC_URL/NEXT_PUBLIC_RPC_URL or NEXT_PUBLIC_AGENT_REGISTRY_ADDRESS.");
-        setLoading(false);
-        return;
-      }
-
-      setLoading(true);
-      setError(null);
-
-      try {
-        const [agentStruct, avgScaled] = await Promise.all([
-          publicClient.readContract({
-            address: registryAddress,
-            abi: agentRegistryAbi,
-            functionName: "agents",
-            args: [address as Address],
-          }),
-          publicClient.readContract({
-            address: registryAddress,
-            abi: agentRegistryAbi,
-            functionName: "getAvgRatingScaled",
-            args: [address as Address],
-          }),
-        ]);
-
-        const avg = Number(avgScaled) / 1_000_000;
-        const uri = String((agentStruct as any)?.metadataUri ?? "");
-
-        setAgentData(agentStruct);
-        setAvgRating(avg);
-        setMetadataUri(uri);
-
-        if (uri.startsWith("http")) {
-          try {
-            const res = await fetch(uri, { cache: "no-store" });
-            if (res.ok) {
-              const json = await res.json().catch(() => null);
-              if (!cancelled) setMetadataJson(json);
-            }
-          } catch {
-            // ignore metadata fetch errors
-          }
-        }
-      } catch (err) {
-        if (!cancelled) setError((err as Error)?.message ?? "Failed to fetch agent data");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [address, publicClient, registryAddress, rpcUrl]);
-
-  if (error) {
-    return <div className="card">{error}</div>;
-  }
-
-  if (loading) {
-    return <div className="card">Loading agent…</div>;
+  if (!agent) {
+    return (
+      <AppShell>
+        <div className="p-10 text-center">Agent not found</div>
+      </AppShell>
+    );
   }
 
   return (
-    <div className="stack" style={{ gap: 16 }}>
-      <div className="card stack" style={{ gap: 8 }}>
-        <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-          <div>
-            <h2 className="mono">{address}</h2>
-            <div className="small">Agent profile</div>
-          </div>
-          <div className="row" style={{ gap: 8 }}>
-            <CopyButton value={address} />
-            <a className="button" href={`${explorerBase}${address}`} target="_blank" rel="noreferrer">
-              Open in explorer ↗
-            </a>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid">
-        <div className="card stack">
-          <strong>Reputation</strong>
-          <div>Avg rating: {avgRating > 0 ? avgRating.toFixed(2) : "N/A"}</div>
-          <div>Jobs: {Number(agentData?.jobCount ?? 0)}</div>
-          <div>Feedback: {Number(agentData?.feedbackCount ?? 0)}</div>
-        </div>
-        <div className="card stack">
-          <strong>Status</strong>
-          <div>{agentData?.active ? "Active" : "Inactive"}</div>
-          <div>Created: {Number(agentData?.createdAt ?? 0)}</div>
-          <div>Last update: {Number(agentData?.lastUpdate ?? 0)}</div>
-        </div>
-      </div>
-
-      <div className="card stack" style={{ gap: 8 }}>
-        <strong>Metadata</strong>
-        <div className="mono small" style={{ wordBreak: "break-word" }}>
-          {metadataUri || "not set"}
-        </div>
-        {metadataJson && (
-          <div className="stack">
-            {metadataJson.name && <div><strong>Name:</strong> {metadataJson.name}</div>}
-            {metadataJson.description && <div><strong>Description:</strong> {metadataJson.description}</div>}
-            {metadataJson.tags?.length ? (
-              <div>
-                <strong>Tags:</strong> {metadataJson.tags.join(", ")}
-              </div>
-            ) : null}
-            {metadataJson.endpoint && (
-              <div>
-                <strong>Endpoint:</strong> {metadataJson.endpoint}
-              </div>
-            )}
-            {metadataJson.agentType && (
-              <div>
-                <strong>Agent type:</strong> {metadataJson.agentType}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      <div className="row" style={{ gap: 8 }}>
-        <Link className="button" href={`/?agent=${address}`}>
-          Use this agent
+    <AppShell>
+      <div className="max-w-6xl mx-auto space-y-8 pb-20">
+        <Link
+          href="/marketplace"
+          className={cn(buttonClasses("ghost", "sm"), "-ml-4 mb-2 text-muted-foreground hover:text-foreground inline-flex gap-2")}
+        >
+          <ArrowLeft className="w-4 h-4" /> Back to Marketplace
         </Link>
-        <Link className="button" href="/marketplace">
-          Back to marketplace
-        </Link>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
+          <div className="lg:col-span-2 space-y-10">
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+              <div className="flex items-center gap-3 mb-6">
+                <Badge variant="neutral" className="bg-white/5">
+                  {agent.category}
+                </Badge>
+                <span className="text-xs text-muted-foreground/60 font-mono uppercase tracking-widest">ID: {agent.id}</span>
+              </div>
+              <h1 className="text-5xl font-bold mb-6 tracking-tight text-white">{agent.name}</h1>
+              <p className="text-lg text-muted-foreground leading-relaxed max-w-2xl">
+                {agent.fullDescription || agent.description}
+              </p>
+            </motion.div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Card className="p-5 flex flex-col gap-2">
+                <div className="flex items-center gap-2 text-emerald-400">
+                  <ShieldCheck className="w-5 h-5" />
+                  <span className="font-bold text-sm">Verified Logic</span>
+                </div>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Source code matches IPFS hash <span className="text-foreground/70 font-mono">QmX7...9v2</span>.
+                </p>
+              </Card>
+              <Card className="p-5 flex flex-col gap-2">
+                <div className="flex items-center gap-2 text-blue-400">
+                  <Activity className="w-5 h-5" />
+                  <span className="font-bold text-sm">TEE Enclave</span>
+                </div>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Execution occurs in a secure enclave. Input data is invisible to the node operator.
+                </p>
+              </Card>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-xl font-bold">Protocol Interface</h3>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  System Online
+                </div>
+              </div>
+              <JobFlow agentId={agent.id} />
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <Card className="p-6 border-primary/20 bg-[#0F1219] shadow-2xl shadow-black/50">
+              <div className="mb-6 pb-6 border-b border-white/5">
+                <span className="text-sm text-muted-foreground block mb-2">Cost estimation</span>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-4xl font-mono font-bold text-white">${agent.price}</span>
+                  <span className="text-sm text-muted-foreground">USDC / run</span>
+                </div>
+              </div>
+              <div className="space-y-4">
+                <div className="flex justify-between text-sm items-center">
+                  <span className="text-muted-foreground flex items-center gap-2">
+                    <Activity className="w-4 h-4" /> Global Usage
+                  </span>
+                  <span className="font-mono text-white font-medium">{agent.runCount.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between text-sm items-center">
+                  <span className="text-muted-foreground flex items-center gap-2">
+                    <Zap className="w-4 h-4" /> Latency
+                  </span>
+                  <span className="font-mono text-white font-medium">~1.2s</span>
+                </div>
+                <div className="flex justify-between text-sm items-center">
+                  <span className="text-muted-foreground flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4" /> Success Rate
+                  </span>
+                  <span className="font-mono text-emerald-400 font-medium">99.8%</span>
+                </div>
+              </div>
+            </Card>
+
+            <div className="space-y-2">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">Capabilities</h4>
+              {["Analyzes Transaction Logs", "Decodes Input Data", "Privacy Preserving", "Instant Settlement"].map((cap) => (
+                <div key={cap} className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <CheckCircle className="w-3.5 h-3.5 text-primary/70" /> {cap}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
-    </div>
-  );
-}
-
-function CopyButton({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false);
-
-  return (
-    <button
-      onClick={() => {
-        navigator.clipboard.writeText(value).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        });
-      }}
-    >
-      {copied ? "Copied" : "Copy"}
-    </button>
+    </AppShell>
   );
 }

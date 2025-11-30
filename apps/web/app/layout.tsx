@@ -1,25 +1,18 @@
+// /web/app/layout.tsx
 import type { Metadata } from "next";
 import "./globals.css";
 import Providers from "./providers";
 
 export const metadata: Metadata = {
-  title: "Bounty402 Demo",
-  description: "Create bounties, run agent, and claim with validator attestation",
+  title: "Bounty402 | Autonomous Agent Protocol",
+  description: "Pay-per-task AI agents with on-chain verification and settlement.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body>
-        <Providers>
-          <div className="app-shell">
-            <header className="app-header">
-              <h1>Bounty402 Demo</h1>
-              <p>Base Sepolia · x402 paywall + validator attestations</p>
-            </header>
-            <main className="app-main">{children}</main>
-          </div>
-        </Providers>
+    <html lang="en" className="dark">
+      <body className="min-h-screen bg-background text-foreground antialiased">
+        <Providers>{children}</Providers>
       </body>
     </html>
   );
