@@ -4,9 +4,12 @@
  */
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "amazing-bot-h1fv",
+  "name": "wallet-agent",
   "main": "src/index.ts",
   "compatibility_date": "2025-06-01",
+  "dev": {
+    "port": 8788
+  },
   "migrations": [
     {
       "tag": "v1",

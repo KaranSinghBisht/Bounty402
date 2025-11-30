@@ -27,8 +27,8 @@
     "enabled": true
   },
   "vars": {
-    "AI_PROVIDER": "anthropic",
-    "MODEL_ID": "claude-sonnet-4-20250514"
+    "AI_PROVIDER": "google",
+    "MODEL_ID": "gemini-2.5-flash"
   },
   "services": [
     {
