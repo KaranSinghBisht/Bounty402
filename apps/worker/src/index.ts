@@ -1,3 +1,4 @@
+// /worker/src/index.ts
 import "dotenv/config";
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
@@ -111,7 +112,7 @@ app.use(
 );
 
 const VerifyBody = z.object({
-  bountyId: z.coerce.number().int().positive(),
+  bountyId: z.coerce.number().int().nonnegative(),
   submissionId: z.coerce.number().int().positive(),
   claimant: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
   artifactHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/),
@@ -127,7 +128,7 @@ app.post("/api/validator/verify", async (c) => {
   const xPayment = c.req.header("x-payment");
   if (!xPayment) return c.json({ ok: false, error: "missing x-payment" }, 400);
   const jobId = keccak256(stringToBytes(xPayment));
-  const jobClient = parsed.data.client as Address;
+  const jobClient = (parsed.data.declaredClient || parsed.data.client) as Address;
   const agent = parsed.data.claimant as Address;
 
   const digest = keccak256(
@@ -174,6 +175,7 @@ app.post("/api/validator/verify", async (c) => {
 
   return c.json({
     ok: true,
+    jobRegistered: Boolean(jobTxHash),
     jobId,
     jobTxHash,
     jobError,

@@ -1,3 +1,4 @@
+// /web/lib/agentRegistryAbi.ts
 export const agentRegistryAbi = [
   {
     type: "function",
@@ -48,6 +49,17 @@ export const agentRegistryAbi = [
     name: "setActive",
     stateMutability: "nonpayable",
     inputs: [{ name: "active", type: "bool" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "submitFeedback",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "jobId", type: "bytes32" },
+      { name: "rating", type: "uint8" },
+      { name: "commentUri", type: "string" },
+    ],
     outputs: [],
   },
   {
@@ -108,6 +120,36 @@ export const agentRegistryAbi = [
     stateMutability: "view",
     inputs: [{ name: "agent", type: "address" }],
     outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "event",
+    name: "AgentRegistered",
+    inputs: [
+      { name: "agent", type: "address", indexed: true },
+      { name: "metadataUri", type: "string", indexed: false },
+    ],
+    anonymous: false,
+  },
+  {
+    type: "event",
+    name: "AgentUpdated",
+    inputs: [
+      { name: "agent", type: "address", indexed: true },
+      { name: "metadataUri", type: "string", indexed: false },
+    ],
+    anonymous: false,
+  },
+  {
+    type: "event",
+    name: "AgentAutoCreated",
+    inputs: [{ name: "agent", type: "address", indexed: true }],
+    anonymous: false,
+  },
+  {
+    type: "event",
+    name: "AgentDeactivated",
+    inputs: [{ name: "agent", type: "address", indexed: true }],
+    anonymous: false,
   },
   {
     type: "event",

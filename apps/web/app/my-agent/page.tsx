@@ -16,7 +16,7 @@ const registryAddress = (process.env.NEXT_PUBLIC_AGENT_REGISTRY_ADDRESS || env.a
 const explorerBase = "https://sepolia.basescan.org/tx/";
 
 export default function MyAgentPage() {
-  const { address, chainId, isConnected, walletClient, switchToBaseSepolia } = useEvmWallet();
+  const { address, chainId, isConnected, walletClient, switchToBaseSepolia, connect } = useEvmWallet();
   const wrongChain = isConnected && chainId !== baseSepolia.id;
 
   const publicClient = useMemo(
@@ -129,7 +129,7 @@ export default function MyAgentPage() {
           {status && <span className="small" style={{ color: "#2563eb" }}>{status}</span>}
         </div>
         {!isConnected ? (
-          <span className="small">Connect your wallet to manage your agent.</span>
+          <button onClick={() => connect()}>Connect MetaMask</button>
         ) : (
           <>
             {wrongChain && <button onClick={() => switchToBaseSepolia()}>Switch to Base Sepolia</button>}

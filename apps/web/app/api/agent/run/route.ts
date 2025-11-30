@@ -1,9 +1,13 @@
+// /web/app/api/agent/run/route.ts
+import crypto from "node:crypto";
 import { z } from "zod";
 import { createPublicClient, createWalletClient, decodeEventLog, http, keccak256, toBytes, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { bountyAbi } from "@/lib/abi";
 import { baseSepolia } from "@/lib/chain";
 import { env } from "@/lib/env";
+import { jsonError } from "@/lib/apiError";
+import { putArtifact } from "@/app/api/artifacts/store";
 
 const submissionCreatedAbi = [
   {
@@ -21,7 +25,7 @@ const submissionCreatedAbi = [
 ] as const;
 
 const BodySchema = z.object({
-  bountyId: z.number().int().positive(),
+  bountyId: z.coerce.number().int().nonnegative(),
   txHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/),
   agentType: z.string().min(1).default("tx-explainer"),
 });
@@ -36,20 +40,24 @@ function stableStringify(value: any): string {
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
+  const requestId = crypto.randomUUID();
   const rpcUrl = process.env.RPC_URL || env.rpcUrl || process.env.NEXT_PUBLIC_RPC_URL;
   const bountyAddress = (process.env.NEXT_PUBLIC_BOUNTY402_ADDRESS || env.bounty402Address) as Hex | undefined;
   const submitterPk = process.env.SUBMITTER_PRIVATE_KEY as Hex | undefined;
 
   if (!rpcUrl || !bountyAddress || !submitterPk) {
-    return Response.json(
-      { error: "Missing RPC_URL/NEXT_PUBLIC_RPC_URL/NEXT_PUBLIC_BOUNTY402_ADDRESS/SUBMITTER_PRIVATE_KEY" },
-      { status: 500 },
+    return jsonError(
+      "MISSING_ENV",
+      "Missing RPC_URL/NEXT_PUBLIC_RPC_URL/NEXT_PUBLIC_BOUNTY402_ADDRESS/SUBMITTER_PRIVATE_KEY",
+      500,
+      undefined,
+      requestId,
     );
   }
 
   const parsed = BodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
-    return Response.json({ error: parsed.error.flatten() }, { status: 400 });
+    return jsonError("INVALID_BODY", "Invalid request body", 400, parsed.error.flatten(), requestId);
   }
 
   const txExplainerUrl = process.env.TX_EXPLAINER_URL || "https://tx-explainer.karanbishttt.workers.dev";
@@ -57,7 +65,7 @@ export async function POST(req: Request) {
 
   const agentRes = await fetch(`${txExplainerUrl}/agent/chat/${sessionId}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-request-id": requestId },
     body: JSON.stringify({
       messages: [
         {
@@ -70,9 +78,12 @@ export async function POST(req: Request) {
 
   if (!agentRes.ok) {
     const text = await agentRes.text().catch(() => "");
-    return Response.json(
-      { error: "tx-explainer failed", status: agentRes.status, body: text },
-      { status: 502 },
+    return jsonError(
+      "TX_EXPLAINER_FAILED",
+      "tx-explainer failed",
+      502,
+      { status: agentRes.status, body: text },
+      requestId,
     );
   }
 
@@ -100,9 +111,19 @@ export async function POST(req: Request) {
 
   const artifactJson = stableStringify(artifactObj);
   const artifactHash = keccak256(toBytes(artifactJson));
-  const uri = `data:application/json,${encodeURIComponent(artifactJson)}`;
+  putArtifact(artifactHash, artifactJson);
+  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+  const uri = `${baseUrl}/api/artifacts/${artifactHash}`;
 
   try {
+    await publicClient.simulateContract({
+      address: bountyAddress,
+      abi: bountyAbi,
+      functionName: "submitWork",
+      args: [BigInt(parsed.data.bountyId), artifactHash, uri],
+      account,
+    });
+
     const txHash = await walletClient.writeContract({
       address: bountyAddress,
       abi: bountyAbi,
@@ -143,6 +164,7 @@ export async function POST(req: Request) {
     }
 
     return Response.json({
+      requestId,
       submissionId: Number(submissionId || 0n),
       artifactHash,
       submitTxHash: txHash,
@@ -151,6 +173,6 @@ export async function POST(req: Request) {
     });
   } catch (err) {
     console.error("agent/run error", err);
-    return Response.json({ error: (err as Error)?.message || "submitWork failed" }, { status: 500 });
+    return jsonError("SUBMIT_WORK_FAILED", (err as Error)?.message || "submitWork failed", 500, undefined, requestId);
   }
 }

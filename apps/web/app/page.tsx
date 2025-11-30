@@ -8,6 +8,7 @@ import { bountyAbi, erc20Abi } from "../lib/abi";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { env } from "../lib/env";
 import { useEvmWallet } from "@/lib/useEvmWallet";
+import { agentRegistryAbi } from "@/lib/agentRegistryAbi";
 
 type Hash = `0x${string}`;
 
@@ -16,9 +17,13 @@ const bountyAddress = (process.env.NEXT_PUBLIC_BOUNTY402_ADDRESS || env.bounty40
 const usdcAddress = (process.env.NEXT_PUBLIC_USDC_ADDRESS || env.usdcAddress) as Hash | undefined;
 const submitterAddress = (process.env.NEXT_PUBLIC_SUBMITTER_ADDRESS || env.submitterAddress) as Hash | undefined;
 const validatorAddress = (process.env.NEXT_PUBLIC_VALIDATOR_ADDRESS || env.validatorAddress) as Hash | undefined;
+const registryAddress = (process.env.NEXT_PUBLIC_AGENT_REGISTRY_ADDRESS || env.agentRegistryAddress) as Hash | undefined;
 const chainIdEnv = Number(process.env.NEXT_PUBLIC_CHAIN_ID || env.chainId || baseSepolia.id);
 const BOUNTY_CREATED_TOPIC0 = keccak256(toBytes("BountyCreated(uint256,address,address,uint256,uint64,bytes32)"));
 const explorerBase = "https://sepolia.basescan.org/tx/";
+const SAMPLE_TXS: Hash[] = [
+  "0x122e259d5cf722bccd227fc853537df12c4b58e7c7fd6b3382211cf8e592f4e5",
+];
 
 function shortHash(h?: string) {
   if (!h) return "";
@@ -64,9 +69,15 @@ export default function Page() {
     jobId?: Hash;
     jobTxHash?: Hash;
     jobError?: string | null;
+    requestId?: string;
+    x402?: any;
   } | null>(null);
   const [statusLine, setStatusLine] = useState<string | null>(null);
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
+  const [feedbackRating, setFeedbackRating] = useState(5);
+  const [feedbackCommentUri, setFeedbackCommentUri] = useState("");
+  const [feedbackTx, setFeedbackTx] = useState<Hash | null>(null);
+  const txLink = txHashInput && /^0x[a-fA-F0-9]{64}$/.test(txHashInput) ? `${explorerBase}${txHashInput}` : null;
 
   const showErrorToast = useCallback((message: string) => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -98,47 +109,26 @@ export default function Page() {
         chain: baseSepolia,
         account: address as Address,
       });
-      await publicClient.waitForTransactionReceipt({ hash: approveHash });
+      const approveReceipt = await publicClient.waitForTransactionReceipt({ hash: approveHash });
+      if (approveReceipt.status !== "success") {
+        throw new Error("USDC approve reverted");
+      }
 
-      const createHash = await walletClient.writeContract({
+      const sim = await publicClient.simulateContract({
         address: bountyAddress,
         abi: bountyAbi,
         functionName: "createBountyWithValidator",
         args: [usdcAddress, rewardUnits, deadlineTs, specHash, validatorAddress],
-        chain: baseSepolia,
         account: address as Address,
       });
-      const receipt = await publicClient.waitForTransactionReceipt({ hash: createHash });
-      let createdId: number | null = null;
-      try {
-        const log = receipt.logs.find(
-          (l) =>
-            l.address?.toLowerCase() === bountyAddress.toLowerCase() &&
-            l.topics?.[0]?.toLowerCase() === BOUNTY_CREATED_TOPIC0.toLowerCase(),
-        );
 
-        if (log) {
-          const topics = [...log.topics] as [`0x${string}`, ...`0x${string}`[]];
-          const decoded = decodeEventLog({
-            abi: bountyAbi,
-            data: log.data,
-            topics,
-          });
-          if (decoded.eventName === "BountyCreated" && decoded.args) {
-            createdId = Number((decoded.args as { bountyId: bigint }).bountyId);
-          }
-        }
-      } catch {
-        createdId = null;
+      const createHash = await walletClient.writeContract(sim.request);
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: createHash });
+      if (receipt.status !== "success") {
+        throw new Error("createBountyWithValidator reverted (check USDC balance/allowance)");
       }
-      if (createdId === null) {
-        const currentId = await publicClient.readContract({
-          address: bountyAddress,
-          abi: bountyAbi,
-          functionName: "bountyCount",
-        });
-        createdId = Number(currentId);
-      }
+
+      const createdId = Number(sim.result);
 
       setBountyId(createdId);
       setCreateTx(createHash);
@@ -213,7 +203,12 @@ export default function Page() {
         jobId: json.jobId,
         jobTxHash: json.jobTxHash,
         jobError: json.jobError ?? null,
+        requestId: json.requestId,
+        x402: json.x402 ?? null,
       });
+      setFeedbackTx(null);
+      setFeedbackCommentUri("");
+      setFeedbackRating(5);
       return json;
     },
     onMutate: () => setStatusLine("Verifying claim…"),
@@ -224,11 +219,42 @@ export default function Page() {
     },
   });
 
+  const feedbackMutation = useMutation({
+    mutationFn: async () => {
+      if (!claimInfo?.jobId) throw new Error("Missing jobId");
+      if (!walletClient || !address) throw new Error("Connect wallet first");
+      if (wrongChain) throw new Error("Wrong network. Switch MetaMask to Base Sepolia (84532).");
+      if (!registryAddress) throw new Error("Missing NEXT_PUBLIC_AGENT_REGISTRY_ADDRESS");
+
+      const txHash = await walletClient.writeContract({
+        address: registryAddress,
+        abi: agentRegistryAbi,
+        functionName: "submitFeedback",
+        args: [claimInfo.jobId, feedbackRating, feedbackCommentUri],
+        chain: baseSepolia,
+        account: address as Address,
+      });
+
+      await publicClient.waitForTransactionReceipt({ hash: txHash });
+      setFeedbackTx(txHash);
+      return txHash;
+    },
+    onMutate: () => {
+      setStatusLine("Submitting feedback…");
+      setFeedbackTx(null);
+    },
+    onSuccess: () => setStatusLine("Feedback submitted"),
+    onError: (err) => {
+      setStatusLine(null);
+      showErrorToast(err instanceof Error ? err.message : String(err));
+    },
+  });
+
   const balancesQuery = useQuery({
     queryKey: ["balances", address, submitterAddress],
     queryFn: async () => {
       if (!usdcAddress || !bountyAddress) return null;
-      const [contractBal, creatorBal, submitterBal, dec] = await Promise.all([
+      const [contractBal, creatorBal, submitterBal, decimalsRaw] = await Promise.all([
         publicClient.readContract({ address: usdcAddress, abi: erc20Abi, functionName: "balanceOf", args: [bountyAddress] }),
         address
           ? publicClient.readContract({
@@ -248,6 +274,7 @@ export default function Page() {
           : Promise.resolve(0n),
         publicClient.readContract({ address: usdcAddress, abi: erc20Abi, functionName: "decimals" }),
       ]);
+      const dec = Number(decimalsRaw);
       return {
         contract: formatUnits(contractBal as bigint, dec as number),
         creator: formatUnits(creatorBal as bigint, dec as number),
@@ -263,7 +290,7 @@ export default function Page() {
         <div className="row">
           <strong>Wallet:</strong>
           {!mounted ? <span className="small">Loading…</span> : connected ? (
-            <span className="mono">{shortHash(address)}</span>
+            <span className="mono">{shortHash(address ?? undefined)}</span>
           ) : (
             <button disabled={createMutation.isPending} onClick={() => connect()}>
               Connect MetaMask
@@ -317,6 +344,20 @@ export default function Page() {
               value={txHashInput}
               onChange={(e) => setTxHashInput(e.target.value as any)}
             />
+            <div className="row" style={{ gap: 8 }}>
+              <button
+                disabled={!SAMPLE_TXS.length}
+                onClick={() => setTxHashInput(SAMPLE_TXS[0])}
+              >
+                Use sample tx
+              </button>
+
+              {txLink && (
+                <a href={txLink} target="_blank" rel="noreferrer" className="mono small">
+                  Open tx ↗
+                </a>
+              )}
+            </div>
 
             <button
               disabled={runMutation.isPending || bountyId == null || createMutation.isPending}
@@ -391,6 +432,57 @@ export default function Page() {
                     <br />
                     <span style={{ color: "#b45309" }}>job warning: {claimInfo.jobError}</span>
                   </>
+                )}
+                {!claimInfo.jobTxHash && (
+                  <div className="small" style={{ color: "#b91c1c", marginTop: 8 }}>
+                    Job registration missing; feedback may fail. Check worker logs/registrar setup.
+                  </div>
+                )}
+                {claimInfo.x402 && (
+                  <details style={{ marginTop: 8 }}>
+                    <summary className="mono">x402 quote</summary>
+                    <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", marginTop: 8 }}>
+                      {JSON.stringify(claimInfo.x402, null, 2)}
+                    </pre>
+                  </details>
+                )}
+                {claimInfo.requestId && (
+                  <div className="small mono" style={{ marginTop: 8 }}>
+                    requestId: {claimInfo.requestId}
+                  </div>
+                )}
+              </div>
+            )}
+            {claimInfo?.jobId && (
+              <div className="card stack" style={{ marginTop: 12, gap: 8 }}>
+                <h4>Feedback</h4>
+                <label>Rating</label>
+                <select value={feedbackRating} onChange={(e) => setFeedbackRating(Number(e.target.value))}>
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+                <label>Comment URI (optional)</label>
+                <input
+                  placeholder="ipfs://... or https://..."
+                  value={feedbackCommentUri}
+                  onChange={(e) => setFeedbackCommentUri(e.target.value)}
+                />
+                <button
+                  disabled={feedbackMutation.isPending || wrongChain || !connected}
+                  onClick={() => feedbackMutation.mutate()}
+                >
+                  {feedbackMutation.isPending ? "Submitting…" : "Submit feedback"}
+                </button>
+                {feedbackTx && (
+                  <div className="small">
+                    tx:{" "}
+                    <a href={`${explorerBase}${feedbackTx}`} target="_blank" rel="noreferrer" className="mono">
+                      {shortHash(feedbackTx)}
+                    </a>
+                  </div>
                 )}
               </div>
             )}

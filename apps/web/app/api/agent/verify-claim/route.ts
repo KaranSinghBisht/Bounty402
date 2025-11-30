@@ -1,3 +1,5 @@
+// /web/app/api/agent/verify-claim/route.ts
+import crypto from "node:crypto";
 import { z } from "zod";
 import { createPublicClient, createWalletClient, http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -5,10 +7,11 @@ import { wrapFetchWithPayment } from "x402-fetch";
 import { bountyAbi } from "@/lib/abi";
 import { baseSepolia } from "@/lib/chain";
 import { env } from "@/lib/env";
+import { jsonError } from "@/lib/apiError";
 
 const BodySchema = z.object({
   bountyId: z.coerce.number().int().nonnegative(),
-  submissionId: z.coerce.number().int().nonnegative(),
+  submissionId: z.coerce.number().int().positive(),
   artifactHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/),
   client: z.string().regex(/^0x[a-fA-F0-9]{40}$/).optional(),
 });
@@ -16,6 +19,7 @@ const BodySchema = z.object({
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
+  const requestId = crypto.randomUUID();
   const rpcUrl = process.env.RPC_URL || env.rpcUrl || process.env.NEXT_PUBLIC_RPC_URL;
   const bountyAddress = (process.env.NEXT_PUBLIC_BOUNTY402_ADDRESS || env.bounty402Address) as Hex | undefined;
   const submitterPk = process.env.SUBMITTER_PRIVATE_KEY as Hex | undefined;
@@ -23,22 +27,22 @@ export async function POST(req: Request) {
   const workerUrl = process.env.WORKER_URL;
 
   if (!rpcUrl || !bountyAddress || !submitterPk || !buyerPk) {
-    return Response.json(
-      {
-        error:
-          "Missing RPC_URL/NEXT_PUBLIC_RPC_URL/NEXT_PUBLIC_BOUNTY402_ADDRESS/SUBMITTER_PRIVATE_KEY/BUYER_PRIVATE_KEY",
-      },
-      { status: 500 },
+    return jsonError(
+      "MISSING_ENV",
+      "Missing RPC_URL/NEXT_PUBLIC_RPC_URL/NEXT_PUBLIC_BOUNTY402_ADDRESS/SUBMITTER_PRIVATE_KEY/BUYER_PRIVATE_KEY",
+      500,
+      undefined,
+      requestId,
     );
   }
 
   if (!workerUrl) {
-    return Response.json({ error: "Missing WORKER_URL" }, { status: 500 });
+    return jsonError("MISSING_ENV", "Missing WORKER_URL", 500, undefined, requestId);
   }
 
   const parsed = BodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
-    return Response.json({ error: parsed.error.flatten() }, { status: 400 });
+    return jsonError("INVALID_BODY", "Invalid request body", 400, parsed.error.flatten(), requestId);
   }
 
   const submitterAccount = privateKeyToAccount(submitterPk);
@@ -60,30 +64,58 @@ export async function POST(req: Request) {
   const timeout = setTimeout(() => controller.abort(), 20_000);
 
   try {
-    console.log("verify-claim request", { ...parsed.data, workerUrl });
+    console.log("verify-claim request", { ...parsed.data, workerUrl, requestId });
 
+    const payload = {
+      bountyId: String(parsed.data.bountyId),
+      submissionId: String(parsed.data.submissionId),
+      claimant: submitterAccount.address,
+      artifactHash: parsed.data.artifactHash,
+      client: buyerAccount.address,
+      declaredClient: parsed.data.client ?? null,
+    };
+
+    // 1) discovery call (intentionally triggers 402) so we can show x402 quote in UI
+    let x402 = null as any;
+    try {
+      const discoverRes = await fetch(`${workerUrl}/api/validator/verify`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-request-id": requestId },
+        signal: controller.signal,
+        body: JSON.stringify(payload),
+      });
+
+      // If it’s 402, parse the quote
+      if (discoverRes.status === 402) {
+        x402 = await discoverRes.json().catch(() => null);
+      }
+    } catch {
+      // ignore discovery failures; paid request might still work
+    }
+
+    // 2) paid request (wrapFetchWithPayment handles payment header)
     const verifyRes = await fetchWithPayment(`${workerUrl}/api/validator/verify`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "x-request-id": requestId },
       signal: controller.signal,
-      body: JSON.stringify({
-        bountyId: String(parsed.data.bountyId),
-        submissionId: String(parsed.data.submissionId),
-        claimant: submitterAccount.address,
-        artifactHash: parsed.data.artifactHash,
-        client: buyerAccount.address,
-        declaredClient: parsed.data.client ?? null,
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (!verifyRes.ok) {
-      return Response.json({ error: await verifyRes.text() }, { status: 500 });
+      const txt = await verifyRes.text().catch(() => "");
+      return jsonError(
+        "WORKER_VERIFY_FAILED",
+        txt || "worker verify failed",
+        500,
+        { status: verifyRes.status },
+        requestId,
+      );
     }
 
     const verifyJson = await verifyRes.json();
     if (!verifyJson?.attestation?.signature) {
       console.error("worker verify failed", verifyRes.status, verifyJson);
-      return Response.json({ error: verifyJson?.error ?? "verification failed" }, { status: 500 });
+      return jsonError("WORKER_NO_SIGNATURE", verifyJson?.error ?? "verification failed", 500, verifyJson, requestId);
     }
 
     const signature = verifyJson.attestation.signature as Hex;
@@ -99,7 +131,13 @@ export async function POST(req: Request) {
       });
     } catch (simErr) {
       console.error("simulate claim failed", simErr);
-      return Response.json({ error: (simErr as Error)?.message ?? "claim simulation failed" }, { status: 400 });
+      return jsonError(
+        "CLAIM_SIMULATION_FAILED",
+        (simErr as Error)?.message ?? "claim simulation failed",
+        400,
+        undefined,
+        requestId,
+      );
     }
 
     const claimTxHash = await walletClient.writeContract({
@@ -112,6 +150,8 @@ export async function POST(req: Request) {
     await publicClient.waitForTransactionReceipt({ hash: claimTxHash });
 
     return Response.json({
+      requestId,
+      x402: x402?.accepts?.[0] ?? x402 ?? null,
       verifyDigest: verifyJson.digest ?? verifyJson.attestation.digest,
       signature,
       claimTxHash,
@@ -122,7 +162,7 @@ export async function POST(req: Request) {
     });
   } catch (err) {
     console.error("agent/verify-claim error", err);
-    return Response.json({ error: (err as Error)?.message ?? "verify-claim failed" }, { status: 500 });
+    return jsonError("VERIFY_CLAIM_FAILED", (err as Error)?.message ?? "verify-claim failed", 500, undefined, requestId);
   } finally {
     clearTimeout(timeout);
   }

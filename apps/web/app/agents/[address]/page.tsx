@@ -1,156 +1,191 @@
 // /web/app/agents/[address]/page.tsx
-import { notFound } from "next/navigation";
-import { agentRegistryAbi } from "@/lib/agentRegistryAbi";
-import { env } from "@/lib/env";
+"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { createPublicClient, http, isAddress, type Address } from "viem";
 import { baseSepolia } from "@/lib/chain";
-import { createPublicClient, formatUnits, getAddress, http, isAddress, type Address } from "viem";
+import { env } from "@/lib/env";
+import { agentRegistryAbi } from "@/lib/agentRegistryAbi";
 
-const rpcUrl = env.rpcUrl || "https://sepolia.base.org";
-const registryAddress = (process.env.NEXT_PUBLIC_AGENT_REGISTRY_ADDRESS || env.agentRegistryAddress) as
-  | Address
-  | undefined;
-const explorerBase = "https://sepolia.basescan.org/tx/";
+const explorerBase = "https://sepolia.basescan.org/address/";
 
-type JobRow = {
-  jobId: string;
-  client: Address;
-  agent: Address;
-  token: Address;
-  amountRaw: bigint;
-  txHash: `0x${string}` | undefined;
-  createdAt?: bigint;
-};
+export default function AgentProfilePage({ params }: { params: { address: string } }) {
+  const address = params.address;
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [agentData, setAgentData] = useState<any>(null);
+  const [avgRating, setAvgRating] = useState(0);
+  const [metadataUri, setMetadataUri] = useState("");
+  const [metadataJson, setMetadataJson] = useState<any | null>(null);
 
-export default async function AgentPage({ params }: { params: { address: string } }) {
-  if (!registryAddress) {
-    return <div className="card">Set NEXT_PUBLIC_AGENT_REGISTRY_ADDRESS to view agents.</div>;
+  const rpcUrl = useMemo(() => process.env.NEXT_PUBLIC_RPC_URL || env.rpcUrl || null, []);
+  const registryAddress = useMemo(
+    () => (process.env.NEXT_PUBLIC_AGENT_REGISTRY_ADDRESS || env.agentRegistryAddress) as Address | undefined,
+    [],
+  );
+
+  const publicClient = useMemo(
+    () => (rpcUrl && registryAddress ? createPublicClient({ chain: baseSepolia, transport: http(rpcUrl) }) : null),
+    [registryAddress, rpcUrl],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!isAddress(address)) {
+        setError("Invalid address");
+        setLoading(false);
+        return;
+      }
+      if (!publicClient || !registryAddress || !rpcUrl) {
+        setError("Missing RPC_URL/NEXT_PUBLIC_RPC_URL or NEXT_PUBLIC_AGENT_REGISTRY_ADDRESS.");
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      setError(null);
+
+      try {
+        const [agentStruct, avgScaled] = await Promise.all([
+          publicClient.readContract({
+            address: registryAddress,
+            abi: agentRegistryAbi,
+            functionName: "agents",
+            args: [address as Address],
+          }),
+          publicClient.readContract({
+            address: registryAddress,
+            abi: agentRegistryAbi,
+            functionName: "getAvgRatingScaled",
+            args: [address as Address],
+          }),
+        ]);
+
+        const avg = Number(avgScaled) / 1_000_000;
+        const uri = String((agentStruct as any)?.metadataUri ?? "");
+
+        setAgentData(agentStruct);
+        setAvgRating(avg);
+        setMetadataUri(uri);
+
+        if (uri.startsWith("http")) {
+          try {
+            const res = await fetch(uri, { cache: "no-store" });
+            if (res.ok) {
+              const json = await res.json().catch(() => null);
+              if (!cancelled) setMetadataJson(json);
+            }
+          } catch {
+            // ignore metadata fetch errors
+          }
+        }
+      } catch (err) {
+        if (!cancelled) setError((err as Error)?.message ?? "Failed to fetch agent data");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [address, publicClient, registryAddress, rpcUrl]);
+
+  if (error) {
+    return <div className="card">{error}</div>;
   }
 
-  if (!params.address || !isAddress(params.address)) {
-    return notFound();
+  if (loading) {
+    return <div className="card">Loading agent…</div>;
   }
-
-  const agentAddr = getAddress(params.address);
-  const publicClient = createPublicClient({
-    chain: baseSepolia,
-    transport: http(rpcUrl),
-  });
-
-  const [agent, avgScaled] = await Promise.all([
-    publicClient.readContract({
-      address: registryAddress,
-      abi: agentRegistryAbi,
-      functionName: "agents",
-      args: [agentAddr],
-    }),
-    publicClient.readContract({
-      address: registryAddress,
-      abi: agentRegistryAbi,
-      functionName: "getAvgRatingScaled",
-      args: [agentAddr],
-    }),
-  ]);
-
-  const logs = await publicClient.getLogs({
-    address: registryAddress,
-    event: {
-      type: "event",
-      name: "JobRegistered",
-      inputs: [
-        { name: "jobId", type: "bytes32", indexed: true },
-        { name: "agent", type: "address", indexed: true },
-        { name: "client", type: "address", indexed: true },
-        { name: "token", type: "address", indexed: false },
-        { name: "amount", type: "uint256", indexed: false },
-      ],
-    },
-    args: { agent: agentAddr },
-    fromBlock: BigInt(env.agentRegistryStartBlock || 0),
-    toBlock: "latest",
-  });
-
-  const recentJobs: JobRow[] = logs.slice(-5).reverse().map((log) => ({
-    jobId: log.args.jobId as string,
-    agent: log.args.agent as Address,
-    client: log.args.client as Address,
-    token: log.args.token as Address,
-    amountRaw: BigInt(log.args.amount as bigint),
-    txHash: log.transactionHash,
-  }));
-
-  const avgRating = Number(avgScaled) / 1_000_000;
 
   return (
     <div className="stack" style={{ gap: 16 }}>
-      <div className="card stack">
-        <div className="row" style={{ justifyContent: "space-between" }}>
+      <div className="card stack" style={{ gap: 8 }}>
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
           <div>
-            <h2 className="mono">{agentAddr}</h2>
-            <div className="small">Trustless Agent Registry</div>
+            <h2 className="mono">{address}</h2>
+            <div className="small">Agent profile</div>
           </div>
-          <div className="stack" style={{ alignItems: "flex-end" }}>
-            <span className="small">Avg rating</span>
-            <strong>{avgRating ? avgRating.toFixed(2) : "N/A"}</strong>
-          </div>
-        </div>
-        <div className="grid">
-          <div className="stack">
-            <span className="small">Active</span>
-            <span>{agent.active ? "Yes" : "No"}</span>
-          </div>
-          <div className="stack">
-            <span className="small">Jobs</span>
-            <span>{Number(agent.jobCount)}</span>
-          </div>
-          <div className="stack">
-            <span className="small">Feedback</span>
-            <span>{Number(agent.feedbackCount)}</span>
-          </div>
-          <div className="stack">
-            <span className="small">Metadata</span>
-            <span className="mono small">{agent.metadataUri || "not set"}</span>
+          <div className="row" style={{ gap: 8 }}>
+            <CopyButton value={address} />
+            <a className="button" href={`${explorerBase}${address}`} target="_blank" rel="noreferrer">
+              Open in explorer ↗
+            </a>
           </div>
         </div>
       </div>
 
-      <div className="card stack">
-        <div className="row" style={{ justifyContent: "space-between" }}>
-          <strong>Recent jobs</strong>
-          <span className="small">Showing last {recentJobs.length} jobs</span>
+      <div className="grid">
+        <div className="card stack">
+          <strong>Reputation</strong>
+          <div>Avg rating: {avgRating > 0 ? avgRating.toFixed(2) : "N/A"}</div>
+          <div>Jobs: {Number(agentData?.jobCount ?? 0)}</div>
+          <div>Feedback: {Number(agentData?.feedbackCount ?? 0)}</div>
         </div>
-        {recentJobs.length === 0 ? (
-          <span className="small">No jobs registered yet.</span>
-        ) : (
-          <div className="stack" style={{ gap: 12 }}>
-            {recentJobs.map((job) => (
-              <div key={job.jobId} className="card stack">
-                <div className="row" style={{ justifyContent: "space-between" }}>
-                  <span className="mono small">{job.jobId}</span>
-                  {job.txHash && (
-                    <a className="small mono" href={`${explorerBase}${job.txHash}`} target="_blank" rel="noreferrer">
-                      tx
-                    </a>
-                  )}
-                </div>
-                <div className="grid">
-                  <div className="stack">
-                    <span className="small">Client</span>
-                    <span className="mono small">{job.client}</span>
-                  </div>
-                  <div className="stack">
-                    <span className="small">Token</span>
-                    <span className="mono small">{job.token}</span>
-                  </div>
-                  <div className="stack">
-                    <span className="small">Amount</span>
-                    <span>{formatUnits(job.amountRaw, 6)} (raw {job.amountRaw.toString()})</span>
-                  </div>
-                </div>
+        <div className="card stack">
+          <strong>Status</strong>
+          <div>{agentData?.active ? "Active" : "Inactive"}</div>
+          <div>Created: {Number(agentData?.createdAt ?? 0)}</div>
+          <div>Last update: {Number(agentData?.lastUpdate ?? 0)}</div>
+        </div>
+      </div>
+
+      <div className="card stack" style={{ gap: 8 }}>
+        <strong>Metadata</strong>
+        <div className="mono small" style={{ wordBreak: "break-word" }}>
+          {metadataUri || "not set"}
+        </div>
+        {metadataJson && (
+          <div className="stack">
+            {metadataJson.name && <div><strong>Name:</strong> {metadataJson.name}</div>}
+            {metadataJson.description && <div><strong>Description:</strong> {metadataJson.description}</div>}
+            {metadataJson.tags?.length ? (
+              <div>
+                <strong>Tags:</strong> {metadataJson.tags.join(", ")}
               </div>
-            ))}
+            ) : null}
+            {metadataJson.endpoint && (
+              <div>
+                <strong>Endpoint:</strong> {metadataJson.endpoint}
+              </div>
+            )}
+            {metadataJson.agentType && (
+              <div>
+                <strong>Agent type:</strong> {metadataJson.agentType}
+              </div>
+            )}
           </div>
         )}
       </div>
+
+      <div className="row" style={{ gap: 8 }}>
+        <Link className="button" href={`/?agent=${address}`}>
+          Use this agent
+        </Link>
+        <Link className="button" href="/marketplace">
+          Back to marketplace
+        </Link>
+      </div>
     </div>
+  );
+}
+
+function CopyButton({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+
+  return (
+    <button
+      onClick={() => {
+        navigator.clipboard.writeText(value).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        });
+      }}
+    >
+      {copied ? "Copied" : "Copy"}
+    </button>
   );
 }
