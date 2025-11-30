@@ -1,4 +1,18 @@
 packages:
-  - "apps/*"
-  - "apps/*/*"
-  - "packages/*"
+  - apps/*
+  - apps/*/*
+  - packages/*
+
+ignoredBuiltDependencies:
+  - '@coinbase/x402'
+  - '@nullshot/agent'
+  - '@nullshot/cli'
+  - '@nullshot/mcp'
+  - bufferutil
+  - core-js-pure
+  - esbuild
+  - keccak
+  - sharp
+  - unrs-resolver
+  - utf-8-validate
+  - workerd

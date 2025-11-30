@@ -32,3 +32,8 @@ packages/contracts/lib/**/.git
 packages/contracts/.env
 packages/contracts/.env.*
 packages/contracts/*.keystore
+
+.dev.vars
+.dev.vars.*
+.wrangler/
+**/.wrangler/
