@@ -2,20 +2,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useAccount, useChainId, useConnect, useDisconnect, useSwitchChain, useWalletClient } from "wagmi";
-import {
-  createPublicClient,
-  decodeEventLog,
-  formatUnits,
-  http,
-  keccak256,
-  parseUnits,
-  toBytes,
-} from "viem";
+import { createPublicClient, decodeEventLog, formatUnits, http, keccak256, parseUnits, toBytes, type Address } from "viem";
 import { baseSepolia } from "../lib/chain";
 import { bountyAbi, erc20Abi } from "../lib/abi";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { env } from "../lib/env";
+import { useEvmWallet } from "@/lib/useEvmWallet";
 
 type Hash = `0x${string}`;
 
@@ -38,12 +30,7 @@ export default function Page() {
   useEffect(() => setMounted(true), []);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { address, isConnected } = useAccount();
-  const { connect, connectors, isPending: isConnectPending } = useConnect();
-  const { disconnect } = useDisconnect();
-  const { data: walletClient } = useWalletClient({ chainId: baseSepolia.id });
-  const chainId = useChainId();
-  const { switchChain, isPending: isSwitching } = useSwitchChain();
+  const { address, chainId, isConnected, walletClient, connect, switchToBaseSepolia } = useEvmWallet();
   const connected = mounted && isConnected;
   const wrongChain = connected && chainId !== baseSepolia.id;
 
@@ -60,16 +47,15 @@ export default function Page() {
   const [deadlineDays, setDeadlineDays] = useState(7);
   const [specText, setSpecText] = useState("Build something cool with Bounty402");
 
-  const [agentType, setAgentType] = useState("demo-agent");
-  const [prompt, setPrompt] = useState("Summarize the bounty submission.");
-
   const [bountyId, setBountyId] = useState<number | null>(null);
   const [createTx, setCreateTx] = useState<Hash | null>(null);
+  const [txHashInput, setTxHashInput] = useState<Hash | "">("");
   const [submissionInfo, setSubmissionInfo] = useState<{
     submissionId: number;
     artifactHash: Hash;
-    txHash: Hash;
-    artifact: string;
+    submitTxHash: Hash;
+    sessionId: string;
+    txSummary: any;
   } | null>(null);
   const [claimInfo, setClaimInfo] = useState<{
     signature: Hash;
@@ -110,7 +96,7 @@ export default function Page() {
         functionName: "approve",
         args: [bountyAddress, rewardUnits],
         chain: baseSepolia,
-        account: address,
+        account: address as Address,
       });
       await publicClient.waitForTransactionReceipt({ hash: approveHash });
 
@@ -120,7 +106,7 @@ export default function Page() {
         functionName: "createBountyWithValidator",
         args: [usdcAddress, rewardUnits, deadlineTs, specHash, validatorAddress],
         chain: baseSepolia,
-        account: address,
+        account: address as Address,
       });
       const receipt = await publicClient.waitForTransactionReceipt({ hash: createHash });
       let createdId: number | null = null;
@@ -169,22 +155,28 @@ export default function Page() {
   const runMutation = useMutation({
     mutationFn: async () => {
       if (bountyId == null) throw new Error("Create a bounty first");
+      if (!txHashInput || !/^0x[a-fA-F0-9]{64}$/.test(txHashInput)) throw new Error("Enter a valid tx hash");
+
       const res = await fetch("/api/agent/run", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ bountyId, prompt, agentType }),
+        body: JSON.stringify({ bountyId, txHash: txHashInput }),
       });
+
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         const msg = typeof json.error === "string" ? json.error : JSON.stringify(json.error ?? json);
         throw new Error(msg || `Request failed (${res.status})`);
       }
+
       setSubmissionInfo({
         submissionId: json.submissionId,
         artifactHash: json.artifactHash,
-        txHash: json.txHash,
-        artifact: json.artifact,
+        submitTxHash: json.submitTxHash,
+        sessionId: json.sessionId,
+        txSummary: json.txSummary,
       });
+
       return json;
     },
     onMutate: () => setStatusLine("Running agent…"),
@@ -270,23 +262,12 @@ export default function Page() {
       <div className="card stack">
         <div className="row">
           <strong>Wallet:</strong>
-          {!mounted ? (
-            <span className="small">Loading…</span>
-          ) : connected ? (
-            <>
-              <span className="mono">{shortHash(address)}</span>
-              <button onClick={() => disconnect()}>Disconnect</button>
-            </>
+          {!mounted ? <span className="small">Loading…</span> : connected ? (
+            <span className="mono">{shortHash(address)}</span>
           ) : (
-            connectors.map((c) => (
-              <button
-                key={c.id}
-                disabled={isConnectPending || createMutation.isPending}
-                onClick={() => connect({ connector: c })}
-              >
-                Connect {c.name}
-              </button>
-            ))
+            <button disabled={createMutation.isPending} onClick={() => connect()}>
+              Connect MetaMask
+            </button>
           )}
         </div>
         {statusLine && (
@@ -304,9 +285,7 @@ export default function Page() {
             <label>Spec</label>
             <textarea value={specText} onChange={(e) => setSpecText(e.target.value)} rows={3} />
             {wrongChain && (
-              <button disabled={isSwitching} onClick={() => switchChain({ chainId: baseSepolia.id })}>
-                {isSwitching ? "Switching…" : "Switch to Base Sepolia"}
-              </button>
+              <button onClick={() => switchToBaseSepolia()}>Switch to Base Sepolia</button>
             )}
             <button disabled={createMutation.isPending || wrongChain} onClick={() => createMutation.mutate()}>
               {createMutation.isPending ? "Creating…" : "Approve + Create"}
@@ -329,15 +308,16 @@ export default function Page() {
           </div>
 
           <div className="stack card">
-            <h3>Step B · Run agent</h3>
-            <label>Agent type</label>
-            <select value={agentType} onChange={(e) => setAgentType(e.target.value)}>
-              <option value="demo-agent">demo-agent</option>
-              <option value="summarizer">summarizer</option>
-              <option value="reviewer">reviewer</option>
-            </select>
-            <label>Prompt</label>
-            <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={3} />
+            <h3>Step B · Run tx-explainer</h3>
+
+            <label>Transaction hash (Base Sepolia)</label>
+            <input
+              className="mono"
+              placeholder="0x…"
+              value={txHashInput}
+              onChange={(e) => setTxHashInput(e.target.value as any)}
+            />
+
             <button
               disabled={runMutation.isPending || bountyId == null || createMutation.isPending}
               onClick={() => runMutation.mutate()}
@@ -345,20 +325,31 @@ export default function Page() {
               {runMutation.isPending ? "Submitting…" : "Run Agent (server)"}
             </button>
             {submissionInfo && (
-              <div className="small">
-                submissionId: <span className="mono">{submissionInfo.submissionId}</span>
-                <br />
-                artifactHash: <span className="mono">{shortHash(submissionInfo.artifactHash)}</span>
-                <br />
-                tx:{" "}
-                <a
-                  href={`${explorerBase}${submissionInfo.txHash}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mono"
-                >
-                  {shortHash(submissionInfo.txHash)}
-                </a>
+              <div className="small stack" style={{ gap: 8 }}>
+                <div>
+                  submissionId: <span className="mono">{submissionInfo.submissionId}</span>
+                  <br />
+                  artifactHash: <span className="mono">{shortHash(submissionInfo.artifactHash)}</span>
+                  <br />
+                  sessionId: <span className="mono">{submissionInfo.sessionId}</span>
+                  <br />
+                  tx:{" "}
+                  <a
+                    href={`${explorerBase}${submissionInfo.submitTxHash}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mono"
+                  >
+                    {shortHash(submissionInfo.submitTxHash)}
+                  </a>
+                </div>
+
+                <details>
+                  <summary className="mono">txSummary JSON</summary>
+                  <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", marginTop: 8 }}>
+                    {JSON.stringify(submissionInfo.txSummary, null, 2)}
+                  </pre>
+                </details>
               </div>
             )}
             {runMutation.error && <div className="small" style={{ color: "#b91c1c" }}>{`${runMutation.error}`}</div>}

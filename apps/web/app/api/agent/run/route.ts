@@ -22,9 +22,16 @@ const submissionCreatedAbi = [
 
 const BodySchema = z.object({
   bountyId: z.number().int().positive(),
-  prompt: z.string().min(1),
-  agentType: z.string().min(1),
+  txHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/),
+  agentType: z.string().min(1).default("tx-explainer"),
 });
+
+function stableStringify(value: any): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const keys = Object.keys(value).sort();
+  return `{${keys.map((k) => JSON.stringify(k) + ":" + stableStringify(value[k])).join(",")}}`;
+}
 
 export const runtime = "nodejs";
 
@@ -45,6 +52,32 @@ export async function POST(req: Request) {
     return Response.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
+  const txExplainerUrl = process.env.TX_EXPLAINER_URL || "https://tx-explainer.karanbishttt.workers.dev";
+  const sessionId = `bounty-${parsed.data.bountyId}`;
+
+  const agentRes = await fetch(`${txExplainerUrl}/agent/chat/${sessionId}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      messages: [
+        {
+          role: "user",
+          content: `ONLY THE JSON. Call getTxSummary with {"hash":"${parsed.data.txHash}"}`,
+        },
+      ],
+    }),
+  });
+
+  if (!agentRes.ok) {
+    const text = await agentRes.text().catch(() => "");
+    return Response.json(
+      { error: "tx-explainer failed", status: agentRes.status, body: text },
+      { status: 502 },
+    );
+  }
+
+  const txSummary = await agentRes.json();
+
   const account = privateKeyToAccount(submitterPk);
   const walletClient = createWalletClient({
     account,
@@ -56,11 +89,18 @@ export async function POST(req: Request) {
     transport: http(rpcUrl),
   });
 
-  const artifact = `agent:${parsed.data.agentType}|prompt:${parsed.data.prompt}|bounty:${parsed.data.bountyId}`;
-  const artifactHash = keccak256(toBytes(artifact));
-  const uri = `data:application/json,${encodeURIComponent(
-    JSON.stringify({ prompt: parsed.data.prompt, agentType: parsed.data.agentType, artifact }),
-  )}`;
+  const artifactObj = {
+    kind: "txSummary",
+    agentType: parsed.data.agentType,
+    bountyId: parsed.data.bountyId,
+    txHash: parsed.data.txHash,
+    result: txSummary,
+    createdAt: new Date().toISOString(),
+  };
+
+  const artifactJson = stableStringify(artifactObj);
+  const artifactHash = keccak256(toBytes(artifactJson));
+  const uri = `data:application/json,${encodeURIComponent(artifactJson)}`;
 
   try {
     const txHash = await walletClient.writeContract({
@@ -104,9 +144,10 @@ export async function POST(req: Request) {
 
     return Response.json({
       submissionId: Number(submissionId || 0n),
-      artifact,
       artifactHash,
-      txHash,
+      submitTxHash: txHash,
+      txSummary,
+      sessionId,
     });
   } catch (err) {
     console.error("agent/run error", err);

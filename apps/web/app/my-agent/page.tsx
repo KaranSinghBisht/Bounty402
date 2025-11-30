@@ -2,12 +2,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useAccount, useChainId, useSwitchChain, useWalletClient } from "wagmi";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createPublicClient, http, type Address } from "viem";
 import { baseSepolia } from "@/lib/chain";
 import { agentRegistryAbi } from "@/lib/agentRegistryAbi";
 import { env } from "@/lib/env";
+import { useEvmWallet } from "@/lib/useEvmWallet";
 
 const rpcUrl = env.rpcUrl || "https://sepolia.base.org";
 const registryAddress = (process.env.NEXT_PUBLIC_AGENT_REGISTRY_ADDRESS || env.agentRegistryAddress) as
@@ -16,10 +16,7 @@ const registryAddress = (process.env.NEXT_PUBLIC_AGENT_REGISTRY_ADDRESS || env.a
 const explorerBase = "https://sepolia.basescan.org/tx/";
 
 export default function MyAgentPage() {
-  const { address, isConnected } = useAccount();
-  const { data: walletClient } = useWalletClient({ chainId: baseSepolia.id });
-  const chainId = useChainId();
-  const { switchChain, isPending: isSwitching } = useSwitchChain();
+  const { address, chainId, isConnected, walletClient, switchToBaseSepolia } = useEvmWallet();
   const wrongChain = isConnected && chainId !== baseSepolia.id;
 
   const publicClient = useMemo(
@@ -75,7 +72,7 @@ export default function MyAgentPage() {
         functionName: fnName,
         args: [metadataUri],
         chain: baseSepolia,
-        account: address,
+        account: address as Address,
       });
       await publicClient.waitForTransactionReceipt({ hash: txHash });
       await agentQuery.refetch();
@@ -101,7 +98,7 @@ export default function MyAgentPage() {
         functionName: "setActive",
         args: [nextActive],
         chain: baseSepolia,
-        account: address,
+        account: address as Address,
       });
       await publicClient.waitForTransactionReceipt({ hash: txHash });
       await agentQuery.refetch();
@@ -135,11 +132,7 @@ export default function MyAgentPage() {
           <span className="small">Connect your wallet to manage your agent.</span>
         ) : (
           <>
-            {wrongChain && (
-              <button disabled={isSwitching} onClick={() => switchChain({ chainId: baseSepolia.id })}>
-                {isSwitching ? "Switching…" : "Switch to Base Sepolia"}
-              </button>
-            )}
+            {wrongChain && <button onClick={() => switchToBaseSepolia()}>Switch to Base Sepolia</button>}
             <label>Metadata URI (IPFS/Arweave/GitHub JSON)</label>
             <input value={metadataUri} onChange={(e) => setMetadataUri(e.target.value)} placeholder="ipfs://..." />
             <div className="row" style={{ gap: 8 }}>
