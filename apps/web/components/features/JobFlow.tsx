@@ -13,6 +13,7 @@ import { txUrl } from "@/lib/explorer";
 import { baseSepolia } from "@/lib/chain";
 import { useEvmWallet } from "@/lib/useEvmWallet";
 import { bountyAbi } from "@/lib/abi";
+import { summarizeTx, summarizeWallet } from "@/lib/agentSummary";
 
 const erc20Abi = [
   { type: "function", name: "allowance", stateMutability: "view", inputs: [{ name: "o", type: "address" }, { name: "s", type: "address" }], outputs: [{ type: "uint256" }] },
@@ -98,6 +99,11 @@ export const JobFlow = ({ agentId, onComplete, inline = false, initialInput }: J
   const VALIDATOR_ADDR = (process.env.NEXT_PUBLIC_VALIDATOR_ADDRESS || "") as Hex;
 
   const publicClient = useMemo(() => createPublicClient({ chain: baseSepolia, transport: http(RPC) }), [RPC]);
+  const summary = useMemo(() => {
+    if (!state.resultJson) return null;
+    if (agentId === "tx-explainer") return summarizeTx(state.resultJson, { usdcAddress: USDC_ADDR });
+    return summarizeWallet(state.resultJson, { usdcAddress: USDC_ADDR });
+  }, [state.resultJson, agentId, USDC_ADDR]);
 
   const pushTrace = (title: string, level: ProtoLevel = "info", data?: any) => {
     setTrace((prev) => [...prev, { ts: Date.now(), level, title, data }]);
@@ -531,9 +537,53 @@ export const JobFlow = ({ agentId, onComplete, inline = false, initialInput }: J
                     View artifact JSON ↗
                   </Link>
                 )}
-                {state.resultJson && (
-                  <div className="bg-[#0A0C10] rounded-lg p-4 border border-white/5 font-mono text-xs text-emerald-400/90 overflow-x-auto shadow-inner">
-                    <pre>{JSON.stringify(state.resultJson, null, 2)}</pre>
+                {state.resultJson && summary && (
+                  <div className="space-y-3">
+                    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold text-foreground">{summary.headline}</div>
+                          <div className="text-xs text-muted-foreground mt-1">{summary.paragraph}</div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        {summary.chips.map((c) => (
+                          <span
+                            key={c.label}
+                            className="text-[10px] font-mono px-2 py-1 rounded-md border border-white/10 bg-black/20 text-muted-foreground"
+                          >
+                            {c.label}: <span className="text-foreground">{c.value}</span>
+                          </span>
+                        ))}
+                      </div>
+
+                      <ul className="mt-3 space-y-1 text-xs text-muted-foreground list-disc pl-4">
+                        {summary.highlights.map((h, i) => (
+                          <li key={i}>{h}</li>
+                        ))}
+                      </ul>
+
+                      {summary.flags?.length ? (
+                        <div className="mt-3 rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2">
+                          <div className="text-[10px] font-mono text-red-300 mb-1">Flags</div>
+                          <ul className="text-xs text-red-200/90 list-disc pl-4 space-y-1">
+                            {summary.flags.map((f, i) => (
+                              <li key={i}>{f}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <details className="rounded-xl border border-white/10 bg-[#0A0C10]">
+                      <summary className="cursor-pointer select-none px-4 py-3 text-xs font-mono text-muted-foreground">Raw agent JSON</summary>
+                      <div className="px-4 pb-4 overflow-x-auto">
+                        <pre className="text-xs font-mono text-emerald-400/90">
+                          {JSON.stringify(state.resultJson, null, 2)}
+                        </pre>
+                      </div>
+                    </details>
                   </div>
                 )}
               </div>

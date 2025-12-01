@@ -55,7 +55,7 @@ export async function POST(req: Request) {
   }
 
   const google = createGoogleGenerativeAI({ apiKey });
-  const model = google.languageModel(process.env.GEMINI_MODEL_ID || "gemini-2.0-flash");
+  const model = google.languageModel(process.env.GEMINI_MODEL_ID || "gemini-2.5-flash");
 
   const SYSTEM = `
 You are the Bounty402 chat assistant.
