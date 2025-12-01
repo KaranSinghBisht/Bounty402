@@ -10,6 +10,8 @@ import { cn, truncateHash } from "@/lib/ui-utils";
 import { Box, MessageSquare, Wallet } from "lucide-react";
 import { useEvmWallet } from "@/lib/useEvmWallet";
 import { baseSepolia } from "@/lib/chain";
+import Image from "next/image";
+import logoPng from "@/app/logo.png";
 
 export const AppShell = ({ children }: { children?: React.ReactNode }) => {
   const pathname = usePathname();
@@ -74,8 +76,8 @@ export const AppShell = ({ children }: { children?: React.ReactNode }) => {
       <aside className="hidden md:flex flex-col w-72 border-r border-white/5 bg-[#0B0D12]/80 backdrop-blur-xl fixed h-full z-50">
         <div className="p-6 flex items-center gap-3">
           <Link href="/" className="flex items-center gap-2.5">
-            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center font-bold text-white shadow-lg shadow-primary/20">
-              B
+            <div className="w-8 h-8 rounded-lg overflow-hidden bg-white/[0.04] border border-white/[0.08] shadow-lg shadow-primary/10 flex items-center justify-center">
+              <Image src={logoPng} alt="Bounty402" width={32} height={32} className="w-8 h-8 object-contain" priority />
             </div>
             <span className="font-bold tracking-tight text-lg">Bounty402</span>
           </Link>

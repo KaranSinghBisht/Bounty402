@@ -2,11 +2,13 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { motion } from "framer-motion";
 import { Activity, ArrowRight, CheckCircle2, Cpu, Globe, Lock, Shield, Sparkles, Zap } from "lucide-react";
 import { Background } from "@/components/shared/Background";
 import { Card, buttonClasses } from "@/components/ui/Primitives";
 import { cn } from "@/lib/ui-utils";
+import logoPng from "./logo.png";
 
 const LiveTerminal = () => {
   return (
@@ -80,8 +82,8 @@ export default function Page() {
       <nav className="fixed top-0 inset-x-0 z-50 border-b border-white/5 bg-background/60 backdrop-blur-lg">
         <div className="max-w-7xl mx-auto px-6 h-16 flex justify-between items-center">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center font-bold text-white shadow-lg shadow-primary/20">
-              B
+            <div className="w-8 h-8 rounded-lg overflow-hidden bg-white/[0.04] border border-white/[0.08] shadow-lg shadow-primary/10 flex items-center justify-center">
+              <Image src={logoPng} alt="Bounty402" width={32} height={32} className="w-8 h-8 object-contain" priority />
             </div>
             <span className="text-lg font-bold tracking-tight text-white">Bounty402</span>
           </div>
@@ -144,7 +146,7 @@ export default function Page() {
                 href="/my-agent"
                 className={cn(buttonClasses("default", "lg"), "w-full sm:w-auto text-base font-semibold shadow-2xl shadow-primary/20")}
               >
-                Start Building <ArrowRight className="ml-2 w-4 h-4" />
+                Lauch App <ArrowRight className="ml-2 w-4 h-4" />
               </Link>
               <Link href="/marketplace" className={cn(buttonClasses("glass", "lg"), "w-full sm:w-auto text-base")}>
                 View Marketplace
