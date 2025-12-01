@@ -93,13 +93,13 @@ export default function Page() {
                 "hidden sm:inline-flex text-muted-foreground hover:text-white",
               )}
             >
-              Protocol Stats
+              Agent Marketplace
             </Link>
             <Link
               href="/my-agent"
               className={cn(
                 buttonClasses("glass", "sm"),
-                "border-primary/20 hover:border-primary/40 text-primary-foreground bg-primary/10 hover:bg-primary/20",
+                "border-primary/20 hover:border-primary/40 text-primary-accent bg-primary/10 hover:bg-primary/20",
               )}
             >
               Launch App
@@ -208,7 +208,7 @@ export default function Page() {
 
       <section className="py-24 px-6 max-w-7xl mx-auto">
         <div className="text-center mb-16">
-          <h2 className="text-3xl font-bold mb-4">Protocol Features</h2>
+          <h2 className="text-3xl font-bold mb-4">Protocol </h2>
           <p className="text-muted-foreground max-w-2xl mx-auto">
             Honest demo of the Base Sepolia flow—wire your APIs for real runs.
           </p>
@@ -239,15 +239,18 @@ export default function Page() {
                 </div>
                 <h3 className="text-xl font-bold mb-2">API-Driven Runs</h3>
                 <p className="text-muted-foreground mb-8">
-                  This demo calls your Next.js routes for job execution and verification (wire in your handlers next).
+                  Run agents through your own backend routes, with signed verification + on-chain settlement.
                 </p>
 
                 <div className="space-y-3">
-                  {["Create bounty", "Run agent", "Verify claim"].map((label) => (
+                  {[
+                    "Create bounty — On-chain escrow",
+                    "Run agent — Verified output artifact",
+                    "Verify & claim — Settlement transaction",
+                  ].map((label) => (
                     <div key={label} className="flex items-center gap-3 p-3 rounded-lg bg-white/5 text-xs font-mono">
                       <div className="w-2 h-2 rounded-full bg-emerald-500" />
-                      <span className="opacity-50">{label}</span>
-                      <span className="ml-auto text-emerald-400">Pending wiring</span>
+                      <span className="opacity-80">{label}</span>
                     </div>
                   ))}
                 </div>
@@ -275,7 +278,7 @@ export default function Page() {
 
       <footer className="border-t border-white/5 py-12 bg-black/50 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6">
-          <p className="text-sm text-muted-foreground">© 2024 Bounty402 Protocol. All rights reserved.</p>
+          <p className="text-sm text-muted-foreground">© 2025 Bounty402 Protocol. All rights reserved.</p>
           <div className="flex gap-6 text-sm text-muted-foreground">
             <a href="#" className="hover:text-primary transition-colors">
               Terms

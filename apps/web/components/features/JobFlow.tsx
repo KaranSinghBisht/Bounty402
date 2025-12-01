@@ -57,6 +57,14 @@ interface JobFlowProps {
   inline?: boolean;
 }
 
+type ProtoLevel = "info" | "success" | "error";
+type ProtoEvent = {
+  ts: number;
+  level: ProtoLevel;
+  title: string;
+  data?: any;
+};
+
 export const JobFlow = ({ agentId, onComplete, inline = false }: JobFlowProps) => {
   const [state, setState] = useState<JobState>({
     agentId,
@@ -74,6 +82,11 @@ export const JobFlow = ({ agentId, onComplete, inline = false }: JobFlowProps) =
   const [rewardUSDC, setRewardUSDC] = useState("0.01");
   const [deadlineDays, setDeadlineDays] = useState("7");
   const [specText, setSpecText] = useState(`spec:${agentId}:v1`);
+  const [traceOpen, setTraceOpen] = useState(true);
+  const [trace, setTrace] = useState<ProtoEvent[]>([]);
+  const [runDebug, setRunDebug] = useState<any>(null);
+  const [verifyDebug, setVerifyDebug] = useState<any>(null);
+  const [liveStatus, setLiveStatus] = useState<string>("");
 
   const { address, isConnected, chainId, connect, switchToBaseSepolia, walletClient } = useEvmWallet();
   const onBaseSepolia = chainId === baseSepolia.id;
@@ -84,6 +97,18 @@ export const JobFlow = ({ agentId, onComplete, inline = false }: JobFlowProps) =
   const VALIDATOR_ADDR = (process.env.NEXT_PUBLIC_VALIDATOR_ADDRESS || "") as Hex;
 
   const publicClient = useMemo(() => createPublicClient({ chain: baseSepolia, transport: http(RPC) }), [RPC]);
+
+  const pushTrace = (title: string, level: ProtoLevel = "info", data?: any) => {
+    setTrace((prev) => [...prev, { ts: Date.now(), level, title, data }]);
+  };
+
+  const parseMaybeJson = (s: string) => {
+    try {
+      return JSON.parse(s);
+    } catch {
+      return null;
+    }
+  };
 
   useEffect(() => {
     (async () => {
@@ -200,6 +225,9 @@ export const JobFlow = ({ agentId, onComplete, inline = false }: JobFlowProps) =
   const handleRunAgent = async () => {
     if (!inputValue) return;
     setError("");
+    setRunDebug(null);
+    setLiveStatus("Calling agent…");
+    pushTrace("Calling agent…", "info", { bountyId, agentId, input: inputValue });
     setState((prev) => ({ ...prev, status: "running" }));
 
     try {
@@ -216,6 +244,15 @@ export const JobFlow = ({ agentId, onComplete, inline = false }: JobFlowProps) =
         agentType: agentId,
       });
 
+      setRunDebug(run);
+      pushTrace("Agent response", "success", {
+        requestId: run.requestId,
+        submissionId: run.submissionId,
+        artifactHash: run.artifactHash,
+        submitTxHash: run.submitTxHash,
+        sessionId: run.sessionId,
+      });
+
       setState((prev) => ({
         ...prev,
         status: "verifying",
@@ -226,17 +263,31 @@ export const JobFlow = ({ agentId, onComplete, inline = false }: JobFlowProps) =
         resultJson: run.txSummary,
         jobId: `SUB-${run.submissionId}`,
       }));
+      setLiveStatus("Awaiting verification…");
     } catch (e: any) {
-      setError(e?.message ?? "Run failed");
+      const raw = e?.message ?? "Run failed";
+      const parsed = parseMaybeJson(raw);
+      setError(parsed?.message ?? raw);
+      pushTrace("Run failed", "error", parsed ?? { message: raw });
       setState((prev) => ({ ...prev, status: "started" }));
+      setLiveStatus("");
     }
   };
 
   const handleVerify = async () => {
     setError("");
+    setVerifyDebug(null);
+    setLiveStatus("Verifying claim…");
+    pushTrace("Verifying claim…", "info", {
+      bountyId,
+      submissionId: state.submissionId,
+      artifactHash: state.artifactHash,
+    });
 
     if (!state.submissionId || !state.artifactHash) {
       setError("Missing submissionId/artifactHash (run step didn’t complete).");
+      pushTrace("Verify blocked: missing submissionId/artifactHash", "error");
+      setLiveStatus("");
       return;
     }
 
@@ -256,6 +307,12 @@ export const JobFlow = ({ agentId, onComplete, inline = false }: JobFlowProps) =
         artifactHash: state.artifactHash,
       });
 
+      setVerifyDebug(verified);
+      pushTrace("x402 verified", "success", { requestId: verified.requestId, verifyDigest: verified.verifyDigest });
+      pushTrace("Signature produced", "success", { signature: verified.signature });
+      pushTrace("Claim tx submitted", "success", { claimTxHash: verified.claimTxHash });
+      pushTrace("x402 payload", "info", verified.x402);
+
       setState((prev) => ({
         ...prev,
         status: "completed",
@@ -263,9 +320,15 @@ export const JobFlow = ({ agentId, onComplete, inline = false }: JobFlowProps) =
         claimTxHash: verified.claimTxHash,
         jobId: verified.jobId ?? prev.jobId,
       }));
+      setLiveStatus("");
       if (onComplete) onComplete();
     } catch (e: any) {
-      setError(e?.message ?? "Verify failed");
+      const raw = e?.message ?? "Verify failed";
+      const parsed = parseMaybeJson(raw);
+
+      setError(parsed?.message ?? raw);
+      pushTrace("Verify failed", "error", parsed ?? { message: raw });
+      setLiveStatus("");
     }
   };
 
@@ -547,6 +610,101 @@ export const JobFlow = ({ agentId, onComplete, inline = false }: JobFlowProps) =
           </motion.div>
         </div>
       </div>
+      <Card className="border border-white/[0.08] bg-white/[0.02]">
+        <div className="px-4 py-3 flex items-center justify-between border-b border-white/5">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-primary" />
+            <div className="text-sm font-medium">Protocol Trace</div>
+            {liveStatus && (
+              <span className="text-[10px] font-mono text-muted-foreground bg-white/5 px-2 py-1 rounded">
+                {liveStatus}
+              </span>
+            )}
+          </div>
+
+          <Button variant="glass" size="sm" onClick={() => setTraceOpen((v) => !v)}>
+            {traceOpen ? "Hide" : "Show"}
+          </Button>
+        </div>
+
+        {traceOpen && (
+          <div className="p-4 space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+              {runDebug?.requestId && (
+                <div className="bg-black/20 border border-white/5 rounded-lg p-3">
+                  <div className="text-muted-foreground text-[10px] mb-1">run.requestId</div>
+                  <div className="font-mono break-all">{runDebug.requestId}</div>
+                </div>
+              )}
+              {runDebug?.sessionId && (
+                <div className="bg-black/20 border border-white/5 rounded-lg p-3">
+                  <div className="text-muted-foreground text-[10px] mb-1">agent session</div>
+                  <div className="font-mono break-all">{runDebug.sessionId}</div>
+                </div>
+              )}
+              {verifyDebug?.verifyDigest && (
+                <div className="bg-black/20 border border-white/5 rounded-lg p-3">
+                  <div className="text-muted-foreground text-[10px] mb-1">verifyDigest</div>
+                  <div className="font-mono break-all">{verifyDebug.verifyDigest}</div>
+                </div>
+              )}
+              {verifyDebug?.claimTxHash && txUrl(verifyDebug.claimTxHash) && (
+                <div className="bg-black/20 border border-white/5 rounded-lg p-3">
+                  <div className="text-muted-foreground text-[10px] mb-1">claimTx</div>
+                  <Link href={txUrl(verifyDebug.claimTxHash)!} target="_blank" className="font-mono break-all hover:underline">
+                    {verifyDebug.claimTxHash}
+                  </Link>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <div className="text-xs text-muted-foreground">Timeline</div>
+              <div className="space-y-2">
+                {trace.length === 0 ? (
+                  <div className="text-xs text-muted-foreground">No trace yet. Run an agent to populate this.</div>
+                ) : (
+                  trace.slice(-12).map((e, idx) => (
+                    <div
+                      key={`${e.ts}-${idx}`}
+                      className="flex items-start gap-3 rounded-lg border border-white/5 bg-black/20 px-3 py-2"
+                    >
+                      <div
+                        className={cn(
+                          "mt-1 w-2 h-2 rounded-full",
+                          e.level === "success" ? "bg-emerald-500" : e.level === "error" ? "bg-red-500" : "bg-primary",
+                        )}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-xs font-medium">{e.title}</div>
+                          <div className="text-[10px] font-mono text-muted-foreground">
+                            {new Date(e.ts).toLocaleTimeString()}
+                          </div>
+                        </div>
+                        {e.data !== undefined && (
+                          <pre className="mt-2 text-[10px] text-muted-foreground overflow-x-auto whitespace-pre-wrap break-words">
+                            {JSON.stringify(e.data, null, 2)}
+                          </pre>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {verifyDebug?.x402 && (
+              <div className="space-y-2">
+                <div className="text-xs text-muted-foreground">x402</div>
+                <pre className="text-[10px] bg-black/30 border border-white/5 rounded-lg p-3 overflow-x-auto">
+                  {JSON.stringify(verifyDebug.x402, null, 2)}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
+      </Card>
     </Card>
   );
 };
