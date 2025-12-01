@@ -1,3 +1,4 @@
+// /wallet-agent/src/index.ts
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { ToolboxService } from '@nullshot/agent';
@@ -15,21 +16,18 @@ const EnvSchema = z.object({
 	});
 
 const SYSTEM_PROMPT = `
-You are a wallet analyzer for Base Sepolia.
+You are a wallet analyzer for Base Sepolia (84532).
 
-You have tools available. When the user asks you to "Call <tool>" or "Use <tool>", you MUST call the tool.
+You have tools:
+- getEthBalance({address})
+- getUsdcBalance({address})
+- getRecentUsdcTransfers({address,maxBlocks})
+
+When user provides a wallet address, you MUST use the tools above to fetch real on-chain data
+and then produce a compact JSON risk/profile summary.
 
 IMPORTANT OUTPUT RULE:
-- If the user says "return ONLY the JSON tool result" (or equivalent),
-  then you MUST:
-  1) call the tool with the provided args
-  2) respond with ONLY the exact JSON returned by the tool
-  3) do not add any other text, formatting, markdown, or explanation.
-
-Other rules:
-- Never invent balances or transfers. Use tools for on-chain data.
-- Default chain is Base Sepolia (84532).
-- If the user did not provide required args for a tool, ask for them.
+If the user asks for ONLY JSON, respond with ONLY valid JSON (no markdown, no extra text).
 `;
 
 function getValidatedEnv(env: Env) {
@@ -64,6 +62,11 @@ app.use(
 	}),
 );
 
+app.onError((err, c) => {
+	console.error("wallet-agent unhandled error:", (err as any)?.stack || err);
+	return c.text("Internal server error", 500);
+});
+
 // Debug endpoint to verify tool injection
 app.get('/debug/tools', (c) => {
 	const tools = makeWalletTools(c.env);
@@ -71,11 +74,11 @@ app.get('/debug/tools', (c) => {
 });
 
 // Route all requests to the durable object instance based on session
-app.all('/agent/chat/:sessionId?', async (c) => {
-	const { AGENT } = c.env;
-	var sessionIdStr = c.req.param('sessionId');
+	app.all('/agent/chat/:sessionId?', async (c) => {
+		const { AGENT } = c.env;
+		var sessionIdStr = c.req.param('sessionId');
 
-	if (!sessionIdStr || sessionIdStr == '') {
+		if (!sessionIdStr || sessionIdStr == '') {
 		sessionIdStr = crypto.randomUUID();
 	}
 
@@ -132,51 +135,48 @@ export class SimplePromptAgent extends AiSdkAgent<Env> {
 				: Array.isArray(last?.content)
 				? last.content.map((c: any) => c.text ?? '').join(' ')
 				: '';
-		const jsonOnly = /only the json/i.test(userText);
 
-		if (jsonOnly) {
-			const parsed = tryParseToolCall(userText);
-			if (!parsed) {
-				return new Response(JSON.stringify({ error: 'Could not parse tool call.' }), {
-					status: 400,
-					headers: { 'content-type': 'application/json' },
-				});
-			}
+		const addr = userText.match(/0x[a-fA-F0-9]{40}/)?.[0];
 
-			const t: any = (tools as any)[parsed.name];
-			if (!t || typeof t.execute !== 'function') {
-				return new Response(JSON.stringify({ error: `Unknown tool: ${parsed.name}` }), {
-					status: 400,
-					headers: { 'content-type': 'application/json' },
-				});
-			}
+		if (addr) {
+			const [eth, usdc, transfers] = await Promise.all([
+				(tools as any).getEthBalance.execute({ address: addr }),
+				(tools as any).getUsdcBalance.execute({ address: addr }),
+				(tools as any).getRecentUsdcTransfers.execute({ address: addr, maxBlocks: 20_000 }),
+			]);
 
-			const result = await t.execute(parsed.args);
-			return new Response(JSON.stringify(result), {
+			const activity = transfers.transfers?.length ? 'active' : 'inactive';
+
+			const summary = {
+				chainId: 84532,
+				address: addr,
+				balances: { eth, usdc },
+				recentUsdcTransfers: transfers,
+				profile: {
+					activity,
+					notes: ['Base Sepolia testnet', 'Heuristic-only; use mainnet data for real risk scoring.'],
+				},
+			};
+
+			return new Response(JSON.stringify(summary), {
 				headers: { 'content-type': 'application/json' },
 			});
 		}
 
 		const system = SYSTEM_PROMPT;
 		const maxSteps = 5;
-		// Use the protected streamTextWithMessages method - model is handled automatically by the agent
-		const result = await this.streamTextWithMessages(
-			sessionId,
-			messages.messages,
-			{
-			  system,
-			  maxSteps,
-			  stopWhen: stepCountIs(maxSteps),
-			  // Enable MCP tools from imported mcp.json
-			  tools,
-			  experimental_toolCallStreaming: true,
-			  onError: (error: unknown) => {
-				console.error("Error processing message", error);
-			  },
+		const result = await this.streamTextWithMessages(sessionId, messages.messages, {
+			system,
+			maxSteps,
+			stopWhen: stepCountIs(maxSteps),
+			tools,
+			experimental_toolCallStreaming: true,
+			onError: (error: unknown) => {
+				console.error('Error processing message', error);
 			},
-		  );
-	  
-		  return result.toTextStreamResponse();
+		});
+
+		return result.toTextStreamResponse();
 	}
 }
 

@@ -24,11 +24,23 @@ const submissionCreatedAbi = [
   },
 ] as const;
 
-const BodySchema = z.object({
-  bountyId: z.coerce.number().int().nonnegative(),
-  txHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/),
-  agentType: z.string().min(1).default("tx-explainer"),
-});
+const BodySchema = z
+  .object({
+    bountyId: z.coerce.number().int().nonnegative(),
+    input: z.string().min(1),
+    agentType: z.enum(["tx-explainer", "wallet-explainer"]).default("tx-explainer"),
+  })
+  .superRefine((val, ctx) => {
+    if (val.agentType === "tx-explainer") {
+      if (!/^0x[a-fA-F0-9]{64}$/.test(val.input)) {
+        ctx.addIssue({ code: "custom", message: "tx-explainer expects a 0x + 64-hex tx hash", path: ["input"] });
+      }
+    } else {
+      if (!/^0x[a-fA-F0-9]{40}$/.test(val.input)) {
+        ctx.addIssue({ code: "custom", message: "wallet-explainer expects a 0x + 40-hex address", path: ["input"] });
+      }
+    }
+  });
 
 function stableStringify(value: any): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -60,34 +72,54 @@ export async function POST(req: Request) {
     return jsonError("INVALID_BODY", "Invalid request body", 400, parsed.error.flatten(), requestId);
   }
 
-  const txExplainerUrl = process.env.TX_EXPLAINER_URL || "https://tx-explainer.karanbishttt.workers.dev";
-  const sessionId = `bounty-${parsed.data.bountyId}`;
+  const agentType = parsed.data.agentType;
+  const txAgentUrl = process.env.TX_EXPLAINER_URL || "https://tx-explainer.karanbishttt.workers.dev";
+  const walletAgentUrl =
+    process.env.WALLET_AGENT_URL || process.env.WALLET_EXPLAINER_URL || "https://wallet-agent.karanbishttt.workers.dev";
 
-  const agentRes = await fetch(`${txExplainerUrl}/agent/chat/${sessionId}`, {
+  const agentUrl = agentType === "wallet-explainer" ? walletAgentUrl : txAgentUrl;
+
+  const sessionVersion = process.env.AGENT_SESSION_VERSION || "v1";
+  const sessionId = `${sessionVersion}-bounty-${parsed.data.bountyId}-${agentType}`;
+
+  const prompt =
+    agentType === "tx-explainer"
+      ? `ONLY THE JSON. Call getTxSummary with {"hash":"${parsed.data.input}"}`
+      : `ONLY THE JSON. Analyze this wallet address: ${parsed.data.input}. Return a compact JSON risk/profile summary.`;
+
+  const agentRes = await fetch(`${agentUrl}/agent/chat/${sessionId}`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-request-id": requestId },
     body: JSON.stringify({
-      messages: [
-        {
-          role: "user",
-          content: `ONLY THE JSON. Call getTxSummary with {"hash":"${parsed.data.txHash}"}`,
-        },
-      ],
+      messages: [{ role: "user", content: prompt }],
     }),
   });
 
   if (!agentRes.ok) {
     const text = await agentRes.text().catch(() => "");
-    return jsonError(
-      "TX_EXPLAINER_FAILED",
-      "tx-explainer failed",
-      502,
-      { status: agentRes.status, body: text },
-      requestId,
-    );
+    return jsonError("AGENT_FAILED", `${agentType} failed`, 502, { status: agentRes.status, body: text, agentUrl }, requestId);
   }
 
-  const txSummary = await agentRes.json();
+  const raw = await agentRes.text().catch(() => "");
+
+  let txSummary: any;
+  try {
+    txSummary = JSON.parse(raw);
+  } catch {
+    // Attempt to strip Markdown fences/backticks if present
+    const cleaned = raw.replace(/```[a-zA-Z0-9]*\s*([\s\S]*?)```/m, "$1").trim();
+    try {
+      txSummary = JSON.parse(cleaned);
+    } catch {
+      return jsonError(
+        "AGENT_BAD_JSON",
+        `${agentType} returned non-JSON`,
+        502,
+        { agentUrl, sample: raw.slice(0, 800) },
+        requestId,
+      );
+    }
+  }
 
   const account = privateKeyToAccount(submitterPk);
   const walletClient = createWalletClient({
@@ -100,11 +132,44 @@ export async function POST(req: Request) {
     transport: http(rpcUrl),
   });
 
+  const bountyState = (await publicClient.readContract({
+    address: bountyAddress,
+    abi: bountyAbi,
+    functionName: "bounties",
+    args: [BigInt(parsed.data.bountyId)],
+  })) as any;
+
+  const creator = (bountyState?.[0] as string) ?? "0x0000000000000000000000000000000000000000";
+  const deadline = Number(bountyState?.[1] ?? 0);
+  const status = Number(bountyState?.[2] ?? 999);
+
+  if (creator.toLowerCase() === "0x0000000000000000000000000000000000000000") {
+    return jsonError("BOUNTY_NOT_FOUND", "Bounty does not exist", 400, { bountyId: parsed.data.bountyId }, requestId);
+  }
+  if (status !== 0) {
+    return jsonError(
+      "BOUNTY_NOT_OPEN",
+      "Bounty is not open (already awarded/cancelled/paid)",
+      400,
+      { bountyId: parsed.data.bountyId, status },
+      requestId,
+    );
+  }
+  if (deadline && Math.floor(Date.now() / 1000) > deadline) {
+    return jsonError(
+      "BOUNTY_EXPIRED",
+      "Bounty deadline has passed",
+      400,
+      { bountyId: parsed.data.bountyId, deadline },
+      requestId,
+    );
+  }
+
   const artifactObj = {
-    kind: "txSummary",
-    agentType: parsed.data.agentType,
+    kind: agentType === "tx-explainer" ? "txSummary" : "walletSummary",
+    agentType,
     bountyId: parsed.data.bountyId,
-    txHash: parsed.data.txHash,
+    input: parsed.data.input,
     result: txSummary,
     createdAt: new Date().toISOString(),
   };

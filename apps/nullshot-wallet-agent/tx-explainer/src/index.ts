@@ -45,15 +45,24 @@ app.use(
   }),
 );
 
+app.onError((err, c) => {
+  console.error("wallet-agent unhandled error:", (err as any)?.stack || err);
+  return c.text("Internal server error", 500);
+});
+
 app.get("/debug/tools", (c) => {
   const tools = makeTxTools(c.env);
   return c.json({ toolNames: Object.keys(tools) });
 });
 
 app.all("/agent/chat/:sessionId?", async (c) => {
-  const { AGENT } = c.env;
-  let sessionIdStr = c.req.param("sessionId");
-  if (!sessionIdStr) sessionIdStr = crypto.randomUUID();
+  const AGENT = c.env.AGENT;
+  if (!AGENT) {
+    console.error("Missing Durable Object binding: AGENT");
+    return c.text("Server misconfigured (missing AGENT binding)", 500);
+  }
+
+  let sessionIdStr = c.req.param("sessionId") || crypto.randomUUID();
   const id = AGENT.idFromName(sessionIdStr);
 
   const forwardRequest = new Request(`https://internal/agent/chat/${sessionIdStr}`, {
@@ -62,7 +71,7 @@ app.all("/agent/chat/:sessionId?", async (c) => {
     body: c.req.raw.body,
   });
 
-  return AGENT.get(id).fetch(forwardRequest);
+  return await AGENT.get(id).fetch(forwardRequest);
 });
 
 export class SimplePromptAgent extends AiSdkAgent<Env> {

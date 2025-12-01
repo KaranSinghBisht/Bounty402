@@ -37,9 +37,11 @@ const TransfersSchema = z.object({
 });
 type TransfersParams = z.infer<typeof TransfersSchema>;
 
+const DEFAULT_USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
+
 const WalletEnvSchema = z.object({
 	RPC_URL: z.string().min(1),
-	USDC_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
+	USDC_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/).default(DEFAULT_USDC),
 });
 
 export function makeWalletTools(env: Env) {

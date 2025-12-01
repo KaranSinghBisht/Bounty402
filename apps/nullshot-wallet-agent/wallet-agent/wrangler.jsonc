@@ -36,10 +36,4 @@
   "compatibility_flags": [
     "nodejs_compat"
   ],
-  "services": [
-    {
-      "binding": "MCP_SERVICE",
-      "service": "mcp"
-    }
-  ]
 }

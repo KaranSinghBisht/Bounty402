@@ -3,15 +3,60 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Background } from "@/components/shared/Background";
 import { Button } from "@/components/ui/Primitives";
-import { cn } from "@/lib/ui-utils";
+import { cn, truncateHash } from "@/lib/ui-utils";
 import { Box, MessageSquare, Wallet } from "lucide-react";
+import { useEvmWallet } from "@/lib/useEvmWallet";
+import { baseSepolia } from "@/lib/chain";
 
 export const AppShell = ({ children }: { children?: React.ReactNode }) => {
   const pathname = usePathname();
-  const [walletConnected, setWalletConnected] = useState(false);
+  const { address, chainId, isConnected, connect, switchToBaseSepolia } = useEvmWallet();
+  const onBaseSepolia = chainId === baseSepolia.id;
+  const [escrow, setEscrow] = useState<{ formatted: string; symbol: string } | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/escrow/balance");
+        if (!res.ok) return;
+        const json = await res.json();
+        setEscrow({ formatted: json.formatted, symbol: json.symbol });
+      } catch {
+        // ignore balance errors; show placeholder
+      }
+    })();
+  }, []);
+
+  const statusDotClass = !isConnected
+    ? "bg-red-500"
+    : onBaseSepolia
+      ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]"
+      : "bg-yellow-500";
+
+  const statusText = !isConnected
+    ? "Not connected"
+    : onBaseSepolia
+      ? truncateHash(address!)
+      : `Wrong network (${chainId})`;
+
+  const ctaLabel = !isConnected
+    ? "Connect MetaMask"
+    : onBaseSepolia
+      ? "Connected"
+      : "Switch to Base Sepolia";
+
+  const onCtaClick = async () => {
+    if (!isConnected) {
+      return connect();
+    }
+    if (!onBaseSepolia) {
+      return switchToBaseSepolia();
+    }
+    return;
+  };
 
   const navItems = [
     { icon: MessageSquare, label: "Chat Assistant", path: "/my-agent" },
@@ -71,10 +116,10 @@ export const AppShell = ({ children }: { children?: React.ReactNode }) => {
               <Wallet className="w-3 h-3 text-muted-foreground" />
             </div>
             <p className="text-xl font-mono font-bold text-white">
-              {walletConnected ? "—" : "—"}
+              {escrow ? `${escrow.formatted} ${escrow.symbol}` : "—"}
             </p>
             <p className="text-[10px] text-muted-foreground mt-1">
-              {walletConnected ? "Hook up on-chain read next" : "Connect wallet to view"}
+              {escrow ? "Escrowed in Bounty402 contract" : "Set NEXT_PUBLIC_USDC_ADDRESS to show escrow"}
             </p>
           </div>
         </div>
@@ -95,23 +140,16 @@ export const AppShell = ({ children }: { children?: React.ReactNode }) => {
 
           <div className="flex items-center gap-4">
             <div className="hidden sm:flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-white/[0.03] border border-white/5 transition-all hover:bg-white/[0.05]">
-              <div
-                className={cn(
-                  "w-2 h-2 rounded-full",
-                  walletConnected ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]" : "bg-yellow-500",
-                )}
-              />
-              <span className="text-xs font-mono text-muted-foreground">
-                {walletConnected ? "0x71...8a92" : "Disconnected"}
-              </span>
+              <div className={cn("w-2 h-2 rounded-full", statusDotClass)} />
+              <span className="text-xs font-mono text-muted-foreground">{statusText}</span>
             </div>
             <Button
               size="sm"
-              variant={walletConnected ? "glass" : "default"}
-              onClick={() => setWalletConnected(!walletConnected)}
-              className={walletConnected ? "text-muted-foreground hover:text-foreground" : ""}
+              variant={!isConnected || !onBaseSepolia ? "default" : "glass"}
+              onClick={() => void onCtaClick()}
+              className={isConnected && onBaseSepolia ? "text-muted-foreground hover:text-foreground" : ""}
             >
-              {walletConnected ? "Disconnect" : "Connect Wallet"}
+              {ctaLabel}
             </Button>
           </div>
         </header>
