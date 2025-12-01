@@ -39,5 +39,6 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   relatedAgentId?: string;
+  relatedInput?: string;
   timestamp: number;
 }

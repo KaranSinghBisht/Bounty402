@@ -55,6 +55,7 @@ interface JobFlowProps {
   agentId: string;
   onComplete?: () => void;
   inline?: boolean;
+  initialInput?: string;
 }
 
 type ProtoLevel = "info" | "success" | "error";
@@ -65,7 +66,7 @@ type ProtoEvent = {
   data?: any;
 };
 
-export const JobFlow = ({ agentId, onComplete, inline = false }: JobFlowProps) => {
+export const JobFlow = ({ agentId, onComplete, inline = false, initialInput }: JobFlowProps) => {
   const [state, setState] = useState<JobState>({
     agentId,
     status: "idle",
@@ -125,6 +126,10 @@ export const JobFlow = ({ agentId, onComplete, inline = false }: JobFlowProps) =
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (initialInput) setInputValue(initialInput);
+  }, [initialInput]);
 
   const ensureConnectedBase = async () => {
     if (!isConnected) await connect();

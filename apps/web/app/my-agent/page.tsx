@@ -8,7 +8,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { JobFlow } from "@/components/features/JobFlow";
 import { Badge, Button, Card, Input } from "@/components/ui/Primitives";
 import { AGENTS } from "@/data/agents";
-import { cn, delay } from "@/lib/ui-utils";
+import { cn } from "@/lib/ui-utils";
 import type { ChatMessage } from "@/types";
 
 export default function ChatPage() {
@@ -41,32 +41,36 @@ export default function ChatPage() {
     setInput("");
     setIsTyping(true);
 
-    await delay(1200);
+    try {
+      const nextMessages = [...messages, userMsg].map((m) => ({ role: m.role, content: m.content }));
+      const res = await fetch("/api/assistant/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ messages: nextMessages }),
+      });
 
-    let responseContent = "I can help with that. Could you provide more details?";
-    let relatedAgentId: string | undefined;
-
-    const lowerInput = userMsg.content.toLowerCase();
-    if (lowerInput.includes("tx") || lowerInput.includes("transaction") || lowerInput.includes("hash")) {
-      responseContent =
-        "I recommend using the Tx Decoder module to analyze this transaction hash. It will break down the call trace and state changes.";
-      relatedAgentId = "tx-explainer";
-    } else if (lowerInput.includes("wallet") || lowerInput.includes("address") || lowerInput.includes("risk")) {
-      responseContent =
-        "To generate a risk profile and history overview, the Wallet Profiler agent is best suited for this task.";
-      relatedAgentId = "wallet-explainer";
+      const json = await res.json();
+      const aiMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: json?.message?.content ?? "I can help with that.",
+        timestamp: Date.now(),
+        relatedAgentId: json?.action?.type === "OPEN_AGENT" ? json.action.agentId : undefined,
+        relatedInput: json?.action?.input,
+      };
+      setMessages((prev) => [...prev, aiMsg]);
+    } catch (err: any) {
+      const aiMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: "Sorry, the assistant is unavailable right now.",
+        timestamp: Date.now(),
+      };
+      setMessages((prev) => [...prev, aiMsg]);
+      console.error("chat send error", err);
+    } finally {
+      setIsTyping(false);
     }
-
-    const aiMsg: ChatMessage = {
-      id: (Date.now() + 1).toString(),
-      role: "assistant",
-      content: responseContent,
-      relatedAgentId,
-      timestamp: Date.now(),
-    };
-
-    setMessages((prev) => [...prev, aiMsg]);
-    setIsTyping(false);
   };
 
   return (
@@ -99,7 +103,7 @@ export default function ChatPage() {
                   </div>
                   {msg.relatedAgentId && (
                     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mt-4 w-full md:w-[450px]">
-                      <JobFlow agentId={msg.relatedAgentId} inline />
+                      <JobFlow agentId={msg.relatedAgentId} initialInput={msg.relatedInput} inline />
                     </motion.div>
                   )}
                 </div>
