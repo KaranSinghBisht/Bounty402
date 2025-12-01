@@ -32,6 +32,16 @@ const ERC20_ABI = parseAbi([
 const TransferTopic =
   "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
+function sanitize(value: any): any {
+  if (typeof value === "bigint") return value.toString();
+  if (value == null) return value;
+  if (Array.isArray(value)) return value.map(sanitize);
+  if (typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, sanitize(v)]));
+  }
+  return value;
+}
+
 export function makeTxTools(env: TxEnv) {
   const client = getClient(env);
 
@@ -51,15 +61,14 @@ export function makeTxTools(env: TxEnv) {
   const getTransaction = tool({
     description: "Fetch a transaction by hash on Base Sepolia",
     inputSchema: HashSchema,
-    execute: async ({ hash }: z.infer<typeof HashSchema>) =>
-      client.getTransaction({ hash: hash as Hex }),
+    execute: async ({ hash }: z.infer<typeof HashSchema>) => sanitize(await client.getTransaction({ hash: hash as Hex })),
   });
 
   const getReceipt = tool({
     description: "Fetch a transaction receipt by hash on Base Sepolia",
     inputSchema: HashSchema,
     execute: async ({ hash }: z.infer<typeof HashSchema>) =>
-      client.getTransactionReceipt({ hash: hash as Hex }),
+      sanitize(await client.getTransactionReceipt({ hash: hash as Hex })),
   });
 
   const decodeTxInputAsErc20 = tool({
@@ -68,7 +77,7 @@ export function makeTxTools(env: TxEnv) {
     execute: async ({ input }: { input: string }) => {
       try {
         const decoded = decodeFunctionData({ abi: ERC20_ABI, data: input as Hex });
-        return { ok: true, decoded };
+        return sanitize({ ok: true, decoded });
       } catch (e: any) {
         return { ok: false, error: e?.message ?? String(e) };
       }
@@ -126,10 +135,10 @@ export function makeTxTools(env: TxEnv) {
       let decodedInput: any = { kind: "unknown", data: tx.input };
       try {
         const decoded = decodeFunctionData({ abi: ERC20_ABI, data: tx.input });
-        decodedInput = { kind: "erc20", ...decoded };
+        decodedInput = sanitize({ kind: "erc20", ...decoded });
       } catch {}
 
-      return {
+      const summary = {
         chainId: env.CHAIN_ID ? Number(env.CHAIN_ID) : baseSepolia.id,
         hash,
         from: tx.from,
@@ -140,6 +149,8 @@ export function makeTxTools(env: TxEnv) {
         transfers: await erc20TransfersInTx(h),
         flags: [],
       };
+
+      return sanitize(summary);
     },
   });
 
