@@ -13,7 +13,7 @@ const BodySchema = z.object({
   bountyId: z.coerce.number().int().nonnegative(),
   submissionId: z.coerce.number().int().positive(),
   artifactHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/),
-  client: z.string().regex(/^0x[a-fA-F0-9]{40}$/).optional(),
+  declaredClient: z.string().regex(/^0x[a-fA-F0-9]{40}$/).optional(),
 });
 
 export const runtime = "nodejs";
@@ -67,12 +67,12 @@ export async function POST(req: Request) {
     console.log("verify-claim request", { ...parsed.data, workerUrl, requestId });
 
     const payload = {
-      bountyId: String(parsed.data.bountyId),
-      submissionId: String(parsed.data.submissionId),
+      bountyId: parsed.data.bountyId,
+      submissionId: parsed.data.submissionId,
       claimant: submitterAccount.address,
       artifactHash: parsed.data.artifactHash,
       client: buyerAccount.address,
-      declaredClient: parsed.data.client ?? null,
+      declaredClient: parsed.data.declaredClient ?? null,
     };
 
     // 1) discovery call (intentionally triggers 402) so we can show x402 quote in UI

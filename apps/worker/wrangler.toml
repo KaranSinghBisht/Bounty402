@@ -1,0 +1,15 @@
+name = "bounty402-validator"
+main = "src/index.ts"
+compatibility_date = "2025-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+NETWORK = "base-sepolia"
+BOUNTY402_CHAIN_ID = "84532"
+RPC_URL = "https://sepolia.base.org"
+
+# non-secret addresses can be vars
+RESOURCE_WALLET_ADDRESS = "0x0D95F5E8831b2b32CB414dbcC105f45aF5266c5e"
+BOUNTY402_ADDRESS = "0x7Eca56EABe673037906CBbCbd19B4FBF614e22C5"
+AGENT_REGISTRY_ADDRESS = "0x44E4E4557FD5333bE53d04DE458b28BA9219f925"
+USDC_ADDRESS = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"

@@ -18,6 +18,8 @@ const res = await fetchWithPayment(`${workerUrl}/api/validator/verify`, {
     submissionId: 1,
     claimant: "0xea37E48367B3f722022f45617C7b46b0E533BA40",
     artifactHash: "0xb50278e342b6ecccf8fff27ce861d0df8b82394cd1a134c268d813133fbfdef0",
+    client: account.address,
+    // declaredClient: "0xUSER_WALLET_ADDRESS_HERE",
   }),
 });
 
