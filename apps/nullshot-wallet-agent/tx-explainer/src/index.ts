@@ -50,6 +50,16 @@ app.onError((err, c) => {
   return c.text("Internal server error", 500);
 });
 
+function json(data: any, init: ResponseInit = {}) {
+  const headers = new Headers(init.headers);
+  if (!headers.has("content-type")) headers.set("content-type", "application/json");
+
+  return new Response(
+    JSON.stringify(data, (_k, v) => (typeof v === "bigint" ? v.toString() : v)),
+    { ...init, headers },
+  );
+}
+
 app.get("/debug/tools", (c) => {
   const tools = makeTxTools(c.env);
   return c.json({ toolNames: Object.keys(tools) });
@@ -106,18 +116,12 @@ export class SimplePromptAgent extends AiSdkAgent<Env> {
     if (jsonOnly) {
       const parsed = tryParseToolCall(userText);
       if (!parsed) {
-        return new Response(JSON.stringify({ error: "Could not parse tool call." }), {
-          status: 400,
-          headers: { "content-type": "application/json" },
-        });
+        return json({ error: "Could not parse tool call." }, { status: 400 });
       }
 
       const t: any = (tools as any)[parsed.name];
       if (!t || typeof t.execute !== "function") {
-        return new Response(JSON.stringify({ error: `Unknown tool: ${parsed.name}` }), {
-          status: 400,
-          headers: { "content-type": "application/json" },
-        });
+        return json({ error: `Unknown tool: ${parsed.name}` }, { status: 400 });
       }
 
       const schema = t.inputSchema ?? t.parameters;
@@ -134,17 +138,15 @@ export class SimplePromptAgent extends AiSdkAgent<Env> {
 
       try {
         const result = await t.execute(parsed.args);
-        return new Response(JSON.stringify(result), {
-          headers: { "content-type": "application/json" },
-        });
+        return json(result);
       } catch (e: any) {
-        return new Response(
-          JSON.stringify({
+        return json(
+          {
             error: "Tool execution failed",
             tool: parsed.name,
             message: e?.shortMessage ?? e?.message ?? String(e),
-          }),
-          { status: 400, headers: { "content-type": "application/json" } },
+          },
+          { status: 400 },
         );
       }
     }
