@@ -177,8 +177,19 @@ export async function POST(req: Request) {
   const artifactJson = stableStringify(artifactObj);
   const artifactHash = keccak256(toBytes(artifactJson));
   putArtifact(artifactHash, artifactJson);
-  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
-  const uri = `${baseUrl}/api/artifacts/${artifactHash}`;
+
+  const xfProto = req.headers.get("x-forwarded-proto");
+  const xfHost = req.headers.get("x-forwarded-host");
+  const host = req.headers.get("host");
+
+  const origin =
+    xfProto && xfHost
+      ? `${xfProto}://${xfHost}`
+      : host
+        ? `https://${host}`
+        : req.headers.get("origin") || "http://localhost:3000";
+
+  const uri = `${origin}/api/artifacts/${artifactHash}`;
 
   try {
     await publicClient.simulateContract({
