@@ -181,8 +181,8 @@ export default function Page() {
                   <Shield className="w-5 h-5 text-emerald-400" />
                 </div>
                 <div>
-                  <div className="text-xs text-muted-foreground">Demo Overlay</div>
-                  <div className="text-sm font-bold text-white">Mock status</div>
+                  <div className="text-xs text-muted-foreground">Onchain Status</div>
+                  <div className="text-sm font-bold text-white">Based</div>
                 </div>
               </Card>
             </motion.div>
@@ -198,7 +198,7 @@ export default function Page() {
                 </div>
                 <div>
                   <div className="text-xs text-muted-foreground">Execution Time</div>
-                  <div className="text-sm font-bold text-white">Mocked</div>
+                  <div className="text-sm font-bold text-white">1s</div>
                 </div>
               </Card>
             </motion.div>
